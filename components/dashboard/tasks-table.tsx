@@ -19,14 +19,17 @@ import {
 } from "@/components/ui/table";
 import { ArrowUpRight } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useRouter } from "next/navigation";
 
-type TaskStatus = "pending" | "running" | "completed" | "failed";
+type TaskStatus = "pending" | "running" | "completed" | "failed" | "warning" | "ignored";
 
 type TaskRow = {
   id: string;
+  fullId: string;
   searchTerm: string;
   location: string;
   status: TaskStatus;
+  reviewReason?: string | null;
   sources: string[];
   leads: number;
   createdAt: string;
@@ -51,16 +54,27 @@ const statusTone: Record<
     className: "border-emerald-500/70 bg-emerald-500/10 text-emerald-50",
     dotClass: "bg-emerald-400",
   },
+  warning: {
+    label: "Revisar",
+    className: "border-orange-500/70 bg-orange-500/10 text-orange-50",
+    dotClass: "bg-orange-400",
+  },
   failed: {
     label: "Fallida",
     className: "border-red-500/70 bg-red-500/10 text-red-50",
     dotClass: "bg-red-400",
+  },
+  ignored: {
+    label: "Ignorada",
+    className: "border-slate-500/70 bg-slate-500/10 text-slate-50",
+    dotClass: "bg-slate-400",
   },
 };
 
 const demoTasks: TaskRow[] = [
   {
     id: "T-2048",
+    fullId: "T-2048",
     searchTerm: "Pizzerías",
     location: "Madrid, ES",
     status: "completed",
@@ -70,6 +84,7 @@ const demoTasks: TaskRow[] = [
   },
   {
     id: "T-2047",
+    fullId: "T-2047",
     searchTerm: "Clínicas dentales",
     location: "Ciudad de México",
     status: "running",
@@ -79,6 +94,7 @@ const demoTasks: TaskRow[] = [
   },
   {
     id: "T-2046",
+    fullId: "T-2046",
     searchTerm: "Coffee shops",
     location: "Austin, TX",
     status: "pending",
@@ -88,6 +104,7 @@ const demoTasks: TaskRow[] = [
   },
   {
     id: "T-2045",
+    fullId: "T-2045",
     searchTerm: "Hoteles boutique",
     location: "Buenos Aires",
     status: "failed",
@@ -131,6 +148,84 @@ function Sources({ sources }: { sources: string[] }) {
 }
 
 export function TasksTable() {
+  const [tasks, setTasks] = React.useState<TaskRow[]>([]);
+  const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState<string | null>(null);
+
+  const router = useRouter();
+
+  const fetchTasks = React.useCallback(async () => {
+    try {
+      const response = await fetch("/api/tasks");
+      if (!response.ok) {
+        throw new Error("Failed to fetch tasks");
+      }
+      const data = await response.json();
+
+      // Map Supabase fields to TaskRow structure
+      const mappedTasks: TaskRow[] = data.map((t: any) => ({
+        id: t.id.substring(0, 8), // Short ID for display
+        fullId: t.id,
+        searchTerm: t.keyword,
+        location: t.location,
+        status: t.status as TaskStatus,
+        reviewReason: t.review_reason,
+        sources: t.sources || [],
+        leads: t.leads_count || 0,
+        createdAt: new Date(t.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      }));
+
+      setTasks(mappedTasks);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Async error");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const updateTaskStatus = async (taskId: string, newStatus: TaskStatus) => {
+    try {
+      const response = await fetch(`/api/tasks/${taskId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: newStatus }),
+      });
+
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Failed to update status");
+
+      fetchTasks();
+    } catch (err) {
+      alert("Error actualizando estado: " + (err instanceof Error ? err.message : "Error desconocido"));
+    }
+  };
+
+  const downloadCSV = async (taskId: string) => {
+    try {
+      const response = await fetch(`/api/tasks/${taskId}/export`);
+      if (!response.ok) throw new Error("Export failed");
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `leads-${taskId.substring(0, 8)}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch (err) {
+      alert("Error exportando CSV: " + (err instanceof Error ? err.message : "Error desconocido"));
+    }
+  };
+
+  React.useEffect(() => {
+    fetchTasks();
+    const interval = setInterval(fetchTasks, 15000); // Refresh every 15s
+    return () => clearInterval(interval);
+  }, [fetchTasks]);
+
   const columns = React.useMemo<ColumnDef<TaskRow>[]>(
     () => [
       {
@@ -148,7 +243,16 @@ export function TasksTable() {
       {
         accessorKey: "status",
         header: "Estado",
-        cell: ({ row }) => <StatusBadge status={row.original.status} />,
+        cell: ({ row }) => (
+          <div className="space-y-1">
+            <StatusBadge status={row.original.status} />
+            {row.original.status === "warning" && (
+              <p className="max-w-[150px] text-[10px] italic leading-tight text-orange-300 opacity-80">
+                {row.original.reviewReason}
+              </p>
+            )}
+          </div>
+        ),
       },
       {
         accessorKey: "sources",
@@ -174,20 +278,58 @@ export function TasksTable() {
       {
         id: "actions",
         header: "",
-        cell: () => (
-          <Button variant="ghost" size="sm" className="gap-2 text-sm">
-            Ver detalles
-            <ArrowUpRight className="h-4 w-4" />
-          </Button>
+        cell: ({ row }) => (
+          <div className="flex items-center gap-2">
+            {row.original.status === "warning" ? (
+              <>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 border-emerald-500/50 text-[10px] text-emerald-300 hover:bg-emerald-500/10"
+                  onClick={() => updateTaskStatus(row.original.fullId, "completed")}
+                >
+                  Confirmar
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 text-[10px] text-muted-foreground"
+                  onClick={() => updateTaskStatus(row.original.fullId, "ignored")}
+                >
+                  Ignorar
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 text-[11px] text-emerald-300 hover:bg-emerald-500/10 hover:text-emerald-200"
+                  onClick={() => downloadCSV(row.original.fullId)}
+                  disabled={row.original.leads === 0}
+                >
+                  Exportar CSV
+                  <ArrowUpRight className="ml-1 h-3 w-3" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 text-[11px] text-muted-foreground"
+                  onClick={() => router.push(`/leads?taskId=${row.original.fullId}`)}
+                >
+                  Detalles
+                </Button>
+              </>
+            )}
+          </div>
         ),
       },
     ],
     [],
   );
 
-  // eslint-disable-next-line react-hooks/incompatible-library
   const table = useReactTable({
-    data: demoTasks,
+    data: tasks,
     columns,
     getCoreRowModel: getCoreRowModel(),
   });
@@ -198,13 +340,26 @@ export function TasksTable() {
         <div>
           <p className="text-sm font-semibold text-white">Tareas recientes</p>
           <p className="text-xs text-muted-foreground">
-            Procesamiento asíncrono en la cola de scraping.
+            {loading ? "Actualizando cola..." : "Procesamiento asíncrono en la cola de scraping."}
           </p>
         </div>
         <Badge variant="outline" className="border-white/10 text-xs">
           Auto-refresh 15s
         </Badge>
       </div>
+
+      {error && (
+        <div className="p-4 text-center text-sm text-red-400">
+          Error al cargar tareas: {error}
+        </div>
+      )}
+
+      {!loading && tasks.length === 0 && !error && (
+        <div className="p-10 text-center text-sm text-muted-foreground">
+          No hay tareas en la cola. ¡Lanza tu primer scraper!
+        </div>
+      )}
+
       <Table>
         <TableHeader>
           {table.getHeaderGroups().map((headerGroup) => (
@@ -214,9 +369,9 @@ export function TasksTable() {
                   {header.isPlaceholder
                     ? null
                     : flexRender(
-                        header.column.columnDef.header,
-                        header.getContext(),
-                      )}
+                      header.column.columnDef.header,
+                      header.getContext(),
+                    )}
                 </TableHead>
               ))}
             </TableRow>

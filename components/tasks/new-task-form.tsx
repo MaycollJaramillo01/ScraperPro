@@ -1,14 +1,19 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { Loader2, Shield } from "lucide-react";
@@ -21,23 +26,73 @@ type SourceOption = {
 
 const sourceOptions: SourceOption[] = [
   {
+    id: "yellow_pages",
+    label: "Yellow Pages (US)",
+    helper: "Directorio comercial en EEUU con telefonos y direcciones.",
+  },
+  {
     id: "google",
     label: "Google Business Profile",
-    helper: "Incluye teléfonos y websites de Maps",
+    helper: "Incluye telefonos y websites de Maps",
   },
   { id: "yelp", label: "Yelp", helper: "Reviews y datos locales" },
-  { id: "manta", label: "Manta", helper: "Datos B2B y dueños" },
+  { id: "manta", label: "Manta", helper: "Datos B2B y duenos" },
   { id: "mapquest", label: "MapQuest", helper: "Direcciones y geos" },
 ];
 
 export function NewTaskForm() {
-  const router = useRouter();
   const [keyword, setKeyword] = useState("");
   const [location, setLocation] = useState("");
+  const [stateCode, setStateCode] = useState("");
+  const [city, setCity] = useState("");
   const [notes, setNotes] = useState("");
-  const [sources, setSources] = useState<string[]>(["google", "yelp"]);
+  const [sources, setSources] = useState<string[]>(["yellow_pages"]);
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const states = useMemo(
+    () => [
+      {
+        code: "CA",
+        name: "California",
+        cities: ["Los Angeles", "San Francisco", "San Diego", "Sacramento"],
+      },
+      {
+        code: "TX",
+        name: "Texas",
+        cities: ["Austin", "Houston", "Dallas", "San Antonio"],
+      },
+      {
+        code: "FL",
+        name: "Florida",
+        cities: ["Miami", "Orlando", "Tampa", "Jacksonville"],
+      },
+      {
+        code: "NY",
+        name: "New York",
+        cities: ["New York", "Buffalo", "Rochester", "Albany"],
+      },
+      {
+        code: "IL",
+        name: "Illinois",
+        cities: ["Chicago", "Naperville", "Peoria", "Springfield"],
+      },
+    ],
+    [],
+  );
+
+  const availableCities = useMemo(() => {
+    return states.find((state) => state.code === stateCode)?.cities ?? [];
+  }, [stateCode, states]);
+
+  useEffect(() => {
+    if (city && stateCode) {
+      setLocation(`${city}, ${stateCode}`);
+    } else {
+      setLocation("");
+    }
+  }, [city, stateCode]);
 
   const toggleSource = (id: string) => {
     setSources((prev) =>
@@ -45,26 +100,67 @@ export function NewTaskForm() {
     );
   };
 
-  const onSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+  const onSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setSubmitting(true);
     setMessage(null);
+    setError(null);
 
-    const payload = {
-      keyword,
-      location,
-      sources,
-      notes,
-    };
-
-    // Placeholder for queue submission. Replace with call to Next API route.
-    setTimeout(() => {
+    if (!keyword.trim()) {
+      setError("Ingresa una palabra clave.");
       setSubmitting(false);
-      setMessage("Tarea creada. Se está procesando en background.");
-      router.push("/");
-    }, 900);
+      return;
+    }
 
-    console.log("Task payload", payload);
+    if (!location.trim()) {
+      setError("Selecciona estado y ciudad de Estados Unidos.");
+      setSubmitting(false);
+      return;
+    }
+
+    try {
+      const selectedSources = sources.length ? sources : ["yellow_pages"];
+
+      const response = await fetch("/api/tasks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          keyword,
+          location,
+          sources: selectedSources,
+          notes,
+        }),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result?.error ?? "No se pudo crear la tarea");
+      }
+
+      const leadsCount = result?.yellowPages?.leads?.length ?? 0;
+      setMessage(
+        result?.message ??
+          `Tarea lista. Yellow Pages devolvio ${leadsCount} leads y se guardo en Supabase.`,
+      );
+
+      if (result?.supabase) {
+        const warnings = Object.values(result.supabase).filter(Boolean);
+        if (warnings.length > 0) {
+          setError(`Supabase aviso: ${warnings.join(" / ")}`);
+        }
+      }
+
+      // Mantener en pantalla para lanzar mas tareas en serie.
+    } catch (submitError) {
+      setError(
+        submitError instanceof Error
+          ? submitError.message
+          : "Ocurrio un error al crear la tarea",
+      );
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -72,10 +168,10 @@ export function NewTaskForm() {
       <div className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
         <Card className="border-border/70 bg-black/40">
           <CardHeader>
-            <CardTitle className="text-white">Criterios de búsqueda</CardTitle>
+            <CardTitle className="text-white">Criterios de busqueda</CardTitle>
             <p className="text-sm text-muted-foreground">
-              Define el nicho y la ubicación. La tarea se enviará a la cola
-              asíncrona.
+              Define el nicho y la ubicacion. La tarea se envia a la cola
+              asincrona con rotacion de user agents.
             </p>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -84,20 +180,60 @@ export function NewTaskForm() {
                 <Label htmlFor="keyword">Palabra clave / Nicho</Label>
                 <Input
                   id="keyword"
-                  placeholder="Ej. Pizzerías"
+                  placeholder="Ej. Pizzerias"
                   value={keyword}
                   onChange={(e) => setKeyword(e.target.value)}
                   required
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="location">Ubicación (Ciudad o ZIP)</Label>
+                <Label>Estado</Label>
+                <Select value={stateCode} onValueChange={setStateCode}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Selecciona estado (US)" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {states.map((state) => (
+                      <SelectItem key={state.code} value={state.code}>
+                        {state.name} ({state.code})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <Label>Ciudad</Label>
+                <Select
+                  value={city}
+                  onValueChange={setCity}
+                  disabled={!stateCode}
+                >
+                  <SelectTrigger>
+                    <SelectValue
+                      placeholder={
+                        stateCode ? "Selecciona ciudad" : "Primero el estado"
+                      }
+                    />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {availableCities.map((cityName) => (
+                      <SelectItem key={cityName} value={cityName}>
+                        {cityName}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="location">Destino (auto)</Label>
                 <Input
                   id="location"
-                  placeholder="Madrid, ES"
                   value={location}
-                  onChange={(e) => setLocation(e.target.value)}
-                  required
+                  readOnly
+                  placeholder="Selecciona estado y ciudad"
                 />
               </div>
             </div>
@@ -110,12 +246,12 @@ export function NewTaskForm() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="city">Ciudad</SelectItem>
-                  <SelectItem value="zip">Código Postal</SelectItem>
+                  <SelectItem value="zip">Codigo Postal</SelectItem>
                   <SelectItem value="radius">Radio (km)</SelectItem>
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground">
-                Ajusta alcance del scraper. Configurable vía servicio de Python.
+                Ajusta alcance del scraper. Configurable via servicio de Python.
               </p>
             </div>
 
@@ -137,7 +273,11 @@ export function NewTaskForm() {
             <CardTitle className="text-white">Fuentes a scrapear</CardTitle>
             <p className="text-sm text-muted-foreground">
               Selecciona en paralelo. Los resultados se normalizan en: Nombre,
-              Teléfono, Website, Dirección y Contacto.
+              Telefono, Website, Direccion y Contacto.
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Yellow Pages (US) ya esta conectada a Supabase; el resto se puede
+              activar fuente por fuente.
             </p>
           </CardHeader>
           <CardContent className="space-y-3">
@@ -171,10 +311,10 @@ export function NewTaskForm() {
             <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/5 p-3 text-sm text-emerald-100">
               <div className="flex items-center gap-2 text-emerald-200">
                 <Shield className="h-4 w-4" />
-                Pipeline protegido: tareas corren en background.
+                Pipeline protegido: tareas corren en background con Supabase.
               </div>
               <p className="mt-1 text-xs">
-                Al finalizar, recibirás notificación y podrás explorar en la
+                Al finalizar, recibiras notificacion y podras explorar en la
                 tabla avanzada o exportar CSV/CRM.
               </p>
             </div>
@@ -184,12 +324,17 @@ export function NewTaskForm() {
 
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border/70 bg-black/40 px-4 py-3">
         <div className="space-y-1">
-          <p className="text-sm font-semibold text-white">Ejecución asíncrona</p>
+          <p className="text-sm font-semibold text-white">Ejecucion asincrona</p>
           <p className="text-xs text-muted-foreground">
-            Puedes cerrar la ventana; la cola seguirá procesando.
+            Puedes cerrar la ventana; la cola seguira procesando.
           </p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          {error ? (
+            <Badge variant="destructive" className="text-xs">
+              {error}
+            </Badge>
+          ) : null}
           {message ? (
             <Badge variant="outline" className="border-emerald-500/50 text-xs">
               {message}
