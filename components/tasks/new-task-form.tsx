@@ -36,8 +36,22 @@ const sourceOptions: SourceOption[] = [
     helper: "Incluye telefonos y websites de Maps",
   },
   { id: "yelp", label: "Yelp", helper: "Reviews y datos locales" },
-  { id: "manta", label: "Manta", helper: "Datos B2B y duenos" },
-  { id: "mapquest", label: "MapQuest", helper: "Direcciones y geos" },
+  { id: "manta", label: "Manta", helper: "Datos B2B y dueños" },
+  {
+    id: "paus",
+    label: "Páginas Amarillas US (ES)",
+    helper: "Versión en español enfocada a negocios latinos.",
+  },
+  {
+    id: "facebook_places",
+    label: "Facebook Places",
+    helper: "Negocios locales pequeños; suele tener WhatsApp/telefono.",
+  },
+  {
+    id: "bing_places",
+    label: "Bing Places",
+    helper: "Cobertura alternativa a Google con telefonos y direcciones.",
+  },
 ];
 
 export function NewTaskForm() {
@@ -56,12 +70,31 @@ export function NewTaskForm() {
       {
         code: "CA",
         name: "California",
-        cities: ["Los Angeles", "San Francisco", "San Diego", "Sacramento"],
+        cities: [
+          "Los Angeles",
+          "San Diego",
+          "San Jose",
+          "San Francisco",
+          "Fresno",
+          "Sacramento",
+          "Riverside",
+          "Bakersfield",
+        ],
       },
       {
         code: "TX",
         name: "Texas",
-        cities: ["Austin", "Houston", "Dallas", "San Antonio"],
+        cities: [
+          "Houston",
+          "San Antonio",
+          "Dallas",
+          "Austin",
+          "Fort Worth",
+          "El Paso",
+          "McAllen",
+          "Brownsville",
+          "Laredo",
+        ],
       },
       {
         code: "FL",
@@ -74,9 +107,69 @@ export function NewTaskForm() {
         cities: ["New York", "Buffalo", "Rochester", "Albany"],
       },
       {
+        code: "NJ",
+        name: "New Jersey",
+        cities: ["Newark", "Jersey City", "Paterson"],
+      },
+      {
         code: "IL",
         name: "Illinois",
-        cities: ["Chicago", "Naperville", "Peoria", "Springfield"],
+        cities: ["Chicago", "Aurora", "Naperville"],
+      },
+      {
+        code: "AZ",
+        name: "Arizona",
+        cities: ["Phoenix", "Tucson"],
+      },
+      {
+        code: "NM",
+        name: "New Mexico",
+        cities: ["Albuquerque"],
+      },
+      {
+        code: "NV",
+        name: "Nevada",
+        cities: ["Las Vegas"],
+      },
+      {
+        code: "CO",
+        name: "Colorado",
+        cities: ["Denver"],
+      },
+      {
+        code: "GA",
+        name: "Georgia",
+        cities: ["Atlanta"],
+      },
+      {
+        code: "NC",
+        name: "North Carolina",
+        cities: ["Charlotte", "Raleigh"],
+      },
+      {
+        code: "WA",
+        name: "Washington",
+        cities: ["Seattle"],
+      },
+      {
+        code: "OR",
+        name: "Oregon",
+        cities: ["Portland"],
+      },
+      {
+        code: "MA",
+        name: "Massachusetts",
+        cities: ["Boston"],
+      },
+      {
+        code: "PA",
+        name: "Pennsylvania",
+        cities: ["Philadelphia"],
+      },
+      {
+        code: "DC",
+        name: "District of Columbia",
+        cities: ["Washington"],
       },
     ],
     [],

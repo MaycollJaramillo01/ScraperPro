@@ -1,8 +1,6 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
-type Database = Record<string, never>;
-
-export function getServiceRoleClient(): SupabaseClient<Database> {
+export function getServiceRoleClient(): SupabaseClient {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
@@ -12,7 +10,7 @@ export function getServiceRoleClient(): SupabaseClient<Database> {
     );
   }
 
-  return createClient<Database>(supabaseUrl, supabaseServiceRoleKey, {
+  return createClient(supabaseUrl, supabaseServiceRoleKey, {
     auth: {
       autoRefreshToken: false,
       persistSession: false,

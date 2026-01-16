@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { scrapeYellowPages } from "@/lib/scrapers/yellow-pages";
+import { scrapeYelp } from "@/lib/scrapers/yelp";
 import { getServiceRoleClient } from "@/lib/supabase";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -144,17 +145,41 @@ export async function POST(request: Request) {
       }
     }
 
+    const MIN_LEADS_PER_SOURCE = 300;
+    const MAX_LEADS_PER_SOURCE = 1000;
     const processedSources: string[] = [];
+    const leadsToInsert: {
+      task_id: string;
+      source: string;
+      keyword: string;
+      location: string;
+      name: string;
+      phone?: string | null;
+      website?: string | null;
+      business_profile?: string | null;
+      street?: string | null;
+      city?: string | null;
+      region?: string | null;
+      postal_code?: string | null;
+      address?: string | null;
+      category?: string | null;
+      source_url?: string | null;
+      country?: string | null;
+      raw_location?: string | null;
+    }[] = [];
     let yellowPagesResult:
       | Awaited<ReturnType<typeof scrapeYellowPages>>
       | null = null;
+    let yelpResult: Awaited<ReturnType<typeof scrapeYelp>> | null = null;
 
     if (sources.includes("yellow_pages")) {
       try {
+        const targetLimit = MAX_LEADS_PER_SOURCE; // request up to the allowed maximum
         yellowPagesResult = await scrapeYellowPages({
           keyword,
           location,
-          limit: 2000,
+          // Enforce per-directory lead bounds
+          limit: targetLimit,
         });
       } catch (scrapeError) {
         // ... (error handling remains same)
@@ -177,39 +202,96 @@ export async function POST(request: Request) {
       processedSources.push("yellow_pages");
 
       if (yellowPagesResult.leads.length > 0 && supabase) {
-        const { error: leadsError } = await supabase.from("leads").upsert(
-          yellowPagesResult.leads.map((lead) => ({
+        leadsToInsert.push(
+          ...yellowPagesResult.leads.map((lead) => ({
             task_id: taskId,
             source: "yellow_pages",
             keyword,
             location,
             name: lead.name,
-            phone: lead.phone,
-            website: lead.website,
-            business_profile: lead.sourceUrl,
-            street: lead.street,
-            city: lead.city,
-            region: lead.region,
-            postal_code: lead.postalCode,
-            address: lead.address,
-            category: lead.category,
-            source_url: lead.sourceUrl,
+            phone: lead.phone || null,
+            website: lead.website || null,
+            business_profile: lead.sourceUrl || null,
+            street: lead.street || null,
+            city: lead.city || null,
+            region: lead.region || null,
+            postal_code: lead.postalCode || null,
+            address: lead.address || null,
+            category: lead.category || null,
+            source_url: lead.sourceUrl || null,
             country: "US",
             raw_location: location,
           })),
-          { onConflict: "name,phone" }
         );
-
-        if (leadsError) {
-          supabaseLogs.leadsUpsertError = leadsError.message;
-        }
       }
     }
 
+    if (sources.includes("yelp")) {
+      try {
+        yelpResult = await scrapeYelp({
+          keyword,
+          location,
+          limit: MAX_LEADS_PER_SOURCE,
+        });
+      } catch (scrapeError) {
+        return NextResponse.json(
+          {
+            error:
+              scrapeError instanceof Error
+                ? scrapeError.message
+                : "Yelp scrape failed",
+            source: "yelp",
+          },
+          { status: 502 },
+        );
+      }
+
+      processedSources.push("yelp");
+
+      if (yelpResult.leads.length > 0 && supabase) {
+        leadsToInsert.push(
+          ...yelpResult.leads.map((lead) => ({
+            task_id: taskId,
+            source: "yelp",
+            keyword,
+            location,
+            name: lead.name,
+            phone: lead.phone || null,
+            website: lead.website || null,
+            business_profile: lead.sourceUrl || null,
+            street: lead.street || null,
+            city: lead.city || null,
+            region: lead.region || null,
+            postal_code: lead.postalCode || null,
+            address: lead.address || null,
+            category: lead.category || null,
+            source_url: lead.sourceUrl || null,
+            country: "US",
+            raw_location: location,
+          })),
+        );
+      }
+    }
+
+    if (supabase && leadsToInsert.length > 0) {
+      const { error: leadsError } = await supabase
+        .from("leads")
+        .upsert(leadsToInsert, { onConflict: "name,phone" });
+
+      if (leadsError) {
+        supabaseLogs.leadsUpsertError = leadsError.message;
+      }
+    }
+
+    const leadsCount =
+      (yellowPagesResult?.leads.length ?? 0) + (yelpResult?.leads.length ?? 0);
+    const hasMinimum = leadsCount >= MIN_LEADS_PER_SOURCE;
+
     if (supabase) {
-      const leadsCount = yellowPagesResult?.leads.length ?? 0;
-      const finalStatus = leadsCount < 400 ? "warning" : "completed";
-      const reviewReason = leadsCount < 400 ? `Only ${leadsCount} leads found (Target: 400+)` : null;
+      const finalStatus = hasMinimum ? "completed" : "failed";
+      const reviewReason = hasMinimum
+        ? null
+        : `Only ${leadsCount} leads found (Target: ${MIN_LEADS_PER_SOURCE}+)`;
 
       const { error: finalizeError } = await supabase
         .from("scrape_tasks")
@@ -226,6 +308,21 @@ export async function POST(request: Request) {
       }
     }
 
+    if (!hasMinimum) {
+      return NextResponse.json(
+        {
+          error: `Only ${leadsCount} leads found (Target: ${MIN_LEADS_PER_SOURCE}+)`,
+          taskId,
+          keyword,
+          location,
+          processedSources,
+          yellowPages: yellowPagesResult,
+          supabase: supabaseLogs,
+        },
+        { status: 502 },
+      );
+    }
+
     return NextResponse.json(
       {
         taskId,
@@ -233,9 +330,10 @@ export async function POST(request: Request) {
         location,
         processedSources,
         yellowPages: yellowPagesResult,
+        yelp: yelpResult,
         supabase: supabaseLogs,
         message:
-          "Tarea ejecutada con Yellow Pages y persistencia en Supabase (si las tablas existen).",
+          "Tarea ejecutada con las fuentes seleccionadas y persistencia en Supabase (si las tablas existen).",
       },
       { status: 201 },
     );
