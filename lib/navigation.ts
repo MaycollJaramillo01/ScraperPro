@@ -5,6 +5,7 @@ import {
   Sparkles,
   Table2,
   UploadCloud,
+  Shield,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -13,6 +14,7 @@ export type NavItem = {
   href: string;
   icon: LucideIcon;
   badge?: string;
+  adminOnly?: boolean;
 };
 
 export const navItems: NavItem[] = [
@@ -46,5 +48,11 @@ export const navItems: NavItem[] = [
     title: "Ajustes",
     href: "/settings",
     icon: Settings2,
+  },
+  {
+    title: "Administración",
+    href: "/admin",
+    icon: Shield,
+    adminOnly: true,
   },
 ];

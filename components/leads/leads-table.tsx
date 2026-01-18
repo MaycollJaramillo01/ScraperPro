@@ -7,6 +7,7 @@ import {
     getCoreRowModel,
     getSortedRowModel,
     getFilteredRowModel,
+    getPaginationRowModel,
     useReactTable,
     SortingState,
 } from "@tanstack/react-table";
@@ -18,6 +19,14 @@ import {
     TableHeader,
     TableRow,
 } from "@/components/ui/table";
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "@/components/ui/select";
+import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ExternalLink, Search, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react";
 import { Input } from "@/components/ui/input";
@@ -46,6 +55,10 @@ export function LeadsTable({ taskId }: LeadsTableProps) {
     const [error, setError] = React.useState<string | null>(null);
     const [sorting, setSorting] = React.useState<SortingState>([]);
     const [globalFilter, setGlobalFilter] = React.useState("");
+    const [pagination, setPagination] = React.useState({
+        pageIndex: 0,
+        pageSize: 100,
+    });
 
     const fetchLeads = React.useCallback(async () => {
         try {
@@ -196,12 +209,15 @@ export function LeadsTable({ taskId }: LeadsTableProps) {
         state: {
             sorting,
             globalFilter,
+            pagination,
         },
         onSortingChange: setSorting,
         onGlobalFilterChange: setGlobalFilter,
+        onPaginationChange: setPagination,
         getCoreRowModel: getCoreRowModel(),
         getSortedRowModel: getSortedRowModel(),
         getFilteredRowModel: getFilteredRowModel(),
+        getPaginationRowModel: getPaginationRowModel(),
     });
 
     return (
@@ -214,6 +230,30 @@ export function LeadsTable({ taskId }: LeadsTableProps) {
                     onChange={(e) => setGlobalFilter(e.target.value)}
                     className="pl-9 bg-black/20 border-border/50 text-white"
                 />
+            </div>
+
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-xs text-muted-foreground">
+                    Mostrando {table.getRowModel().rows.length} de {data.length} leads.
+                </p>
+                <div className="flex items-center gap-2">
+                    <span className="text-xs text-muted-foreground">Rows:</span>
+                    <Select
+                        value={String(table.getState().pagination.pageSize)}
+                        onValueChange={(val) => table.setPageSize(Number(val))}
+                    >
+                        <SelectTrigger className="h-8 w-28 bg-black/30 border-border/60">
+                            <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                            {[50, 100, 500].map((size) => (
+                                <SelectItem key={size} value={String(size)}>
+                                    {size}
+                                </SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
+                </div>
             </div>
 
             <div className="overflow-hidden rounded-xl border border-border/70 bg-black/40">
@@ -261,8 +301,30 @@ export function LeadsTable({ taskId }: LeadsTableProps) {
                     </TableBody>
                 </Table>
             </div>
-            <div className="flex items-center justify-end space-x-2 text-xs text-muted-foreground p-1">
-                {table.getFilteredRowModel().rows.length} leads encontrados
+            <div className="flex items-center justify-between text-xs text-muted-foreground p-1">
+                <div>
+                    P?gina {table.getState().pagination.pageIndex + 1} de {table.getPageCount() || 1}
+                </div>
+                <div className="flex items-center gap-2">
+                    <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-8"
+                        disabled={!table.getCanPreviousPage()}
+                        onClick={() => table.previousPage()}
+                    >
+                        Anterior
+                    </Button>
+                    <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-8"
+                        disabled={!table.getCanNextPage()}
+                        onClick={() => table.nextPage()}
+                    >
+                        Siguiente
+                    </Button>
+                </div>
             </div>
         </div>
     );

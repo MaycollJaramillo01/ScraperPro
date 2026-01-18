@@ -2,11 +2,46 @@ import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { scrapeYellowPages } from "@/lib/scrapers/yellow-pages";
 import { scrapeYelp } from "@/lib/scrapers/yelp";
+import {
+  scrapeSerpGoogleMaps,
+  scrapeSerpYelp,
+  scrapeSerpBingPlaces,
+} from "@/lib/scrapers/serpapi";
 import { getServiceRoleClient } from "@/lib/supabase";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+// Lock system to prevent concurrent executions for the same task
+const taskLocks = new Map<string, { locked: boolean; lockedAt: number }>();
+const LOCK_TIMEOUT = 5 * 60 * 1000; // 5 minutes timeout for locks
+
+function getTaskLockKey(keyword: string, location: string): string {
+  return `${keyword.toLowerCase().trim()}:${location.toLowerCase().trim()}`;
+}
+
+function acquireLock(key: string): boolean {
+  const existing = taskLocks.get(key);
+  
+  // Clean up stale locks (older than timeout)
+  if (existing && Date.now() - existing.lockedAt > LOCK_TIMEOUT) {
+    taskLocks.delete(key);
+  }
+  
+  // If lock exists and is still valid, deny access
+  if (taskLocks.has(key)) {
+    return false;
+  }
+  
+  // Acquire lock
+  taskLocks.set(key, { locked: true, lockedAt: Date.now() });
+  return true;
+}
+
+function releaseLock(key: string): void {
+  taskLocks.delete(key);
+}
 
 type TaskRequestBody = {
   keyword?: string;
@@ -83,6 +118,7 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  let taskLockKey = "";
   try {
     const body = (await request.json()) as TaskRequestBody;
 
@@ -103,6 +139,17 @@ export async function POST(request: Request) {
       return NextResponse.json(
         { error: "keyword and location are required" },
         { status: 400 },
+      );
+    }
+
+    // Check for concurrent execution lock
+    taskLockKey = getTaskLockKey(keyword, location);
+    if (!acquireLock(taskLockKey)) {
+      return NextResponse.json(
+        {
+          error: `Esta tarea ya está en ejecución para "${keyword}" en "${location}". Por favor espera a que termine.`,
+        },
+        { status: 409 }, // Conflict
       );
     }
 
@@ -147,8 +194,11 @@ export async function POST(request: Request) {
 
     const MIN_LEADS_PER_SOURCE = 300;
     const MAX_LEADS_PER_SOURCE = 1000;
+    const MAX_CYCLES = 5; // Maximum number of retry cycles
+    const CYCLE_DELAY_MS = 2000; // 2 seconds delay between cycles
+    
     const processedSources: string[] = [];
-    const leadsToInsert: {
+    const accumulatedLeads: {
       task_id: string;
       source: string;
       keyword: string;
@@ -167,138 +217,271 @@ export async function POST(request: Request) {
       country?: string | null;
       raw_location?: string | null;
     }[] = [];
+    
+    // Track results across all cycles
     let yellowPagesResult:
       | Awaited<ReturnType<typeof scrapeYellowPages>>
       | null = null;
     let yelpResult: Awaited<ReturnType<typeof scrapeYelp>> | null = null;
+    let googleMapsResult: Awaited<ReturnType<typeof scrapeSerpGoogleMaps>> | null =
+      null;
+    let yelpSerpResult: Awaited<ReturnType<typeof scrapeSerpYelp>> | null = null;
+    let bingPlacesResult: Awaited<ReturnType<typeof scrapeSerpBingPlaces>> | null =
+      null;
+    
+    // Execute scraping cycles until we reach 300 leads or max cycles
+    let currentCycle = 0;
+    let totalLeadsCount = 0;
 
-    if (sources.includes("yellow_pages")) {
-      try {
-        const targetLimit = MAX_LEADS_PER_SOURCE; // request up to the allowed maximum
-        yellowPagesResult = await scrapeYellowPages({
-          keyword,
-          location,
-          // Enforce per-directory lead bounds
-          limit: targetLimit,
-        });
-      } catch (scrapeError) {
-        // ... (error handling remains same)
-        return NextResponse.json(
-          {
-            error:
-              scrapeError instanceof Error
-                ? scrapeError.message
-                : "Yellow Pages scrape failed",
-            source: "yellow_pages",
-            meta:
-              scrapeError && typeof scrapeError === "object" && "meta" in scrapeError
-                ? (scrapeError as any).meta
+    // Scraping loop: execute cycles until we reach 300 leads or max cycles
+    while (currentCycle < MAX_CYCLES && totalLeadsCount < MIN_LEADS_PER_SOURCE) {
+      currentCycle++;
+      console.log(
+        `[Task ${taskId}] Cycle ${currentCycle}/${MAX_CYCLES} - Current leads: ${totalLeadsCount}`,
+      );
+
+      const cycleLeads: typeof accumulatedLeads = [];
+
+      // Scrape all sources for this cycle
+      if (sources.includes("yellow_pages")) {
+        try {
+          const targetLimit = MAX_LEADS_PER_SOURCE;
+          yellowPagesResult = await scrapeYellowPages({
+            keyword,
+            location,
+            limit: targetLimit,
+          });
+
+          if (!processedSources.includes("yellow_pages")) {
+            processedSources.push("yellow_pages");
+          }
+
+          if (yellowPagesResult.leads.length > 0) {
+            cycleLeads.push(
+              ...yellowPagesResult.leads.map((lead) => ({
+                task_id: taskId,
+                source: "yellow_pages",
+                keyword,
+                location,
+                name: lead.name,
+                phone: lead.phone || null,
+                website: lead.website || null,
+                business_profile: lead.sourceUrl || null,
+                street: lead.street || null,
+                city: lead.city || null,
+                region: lead.region || null,
+                postal_code: lead.postalCode || null,
+                address: lead.address || null,
+                category: lead.category || null,
+                source_url: lead.sourceUrl || null,
+                country: "US",
+                raw_location: location,
+              })),
+            );
+          }
+        } catch (scrapeError) {
+          console.error(`[Task ${taskId}] Yellow Pages error in cycle ${currentCycle}:`, scrapeError);
+          // Continue with other sources instead of failing
+        }
+      }
+
+      if (sources.includes("yelp")) {
+        try {
+          yelpSerpResult = await scrapeSerpYelp({
+            keyword,
+            location,
+            limit: MAX_LEADS_PER_SOURCE,
+          });
+
+          if (!processedSources.includes("yelp")) {
+            processedSources.push("yelp");
+          }
+
+          if (yelpSerpResult.leads.length > 0) {
+            cycleLeads.push(
+              ...yelpSerpResult.leads.map((lead) => ({
+                task_id: taskId,
+                source: "yelp",
+                keyword,
+                location,
+                name: lead.name,
+                phone: lead.phone || null,
+                website: lead.website || null,
+                business_profile: lead.sourceUrl || null,
+                street: lead.street || null,
+                city: lead.city || null,
+                region: lead.region || null,
+                postal_code: lead.postalCode || null,
+                address: lead.address || null,
+                category: lead.category || null,
+                source_url: lead.sourceUrl || null,
+                country: "US",
+                raw_location: location,
+              })),
+            );
+          }
+        } catch (scrapeError) {
+          console.error(`[Task ${taskId}] Yelp error in cycle ${currentCycle}:`, scrapeError);
+          // Continue with other sources
+        }
+      }
+
+      if (sources.includes("google")) {
+        try {
+          googleMapsResult = await scrapeSerpGoogleMaps({
+            keyword,
+            location,
+            limit: MAX_LEADS_PER_SOURCE,
+          });
+
+          if (!processedSources.includes("google")) {
+            processedSources.push("google");
+          }
+
+          if (googleMapsResult.leads.length > 0) {
+            cycleLeads.push(
+              ...googleMapsResult.leads.map((lead) => ({
+                task_id: taskId,
+                source: "google",
+                keyword,
+                location,
+                name: lead.name,
+                phone: lead.phone || null,
+                website: lead.website || null,
+                business_profile: lead.sourceUrl || null,
+                street: lead.street || null,
+                city: lead.city || null,
+                region: lead.region || null,
+                postal_code: lead.postalCode || null,
+                address: lead.address || null,
+                category: lead.category || null,
+                source_url: lead.sourceUrl || null,
+                country: "US",
+                raw_location: location,
+              })),
+            );
+          }
+        } catch (scrapeError) {
+          console.error(`[Task ${taskId}] Google Maps error in cycle ${currentCycle}:`, scrapeError);
+          // Continue with other sources
+        }
+      }
+
+      if (sources.includes("bing_places")) {
+        try {
+          bingPlacesResult = await scrapeSerpBingPlaces({
+            keyword,
+            location,
+            limit: MAX_LEADS_PER_SOURCE,
+          });
+
+          if (!processedSources.includes("bing_places")) {
+            processedSources.push("bing_places");
+          }
+
+          if (!bingPlacesResult.error && bingPlacesResult.leads.length > 0) {
+            cycleLeads.push(
+              ...bingPlacesResult.leads.map((lead) => ({
+                task_id: taskId,
+                source: "bing_places",
+                keyword,
+                location,
+                name: lead.name,
+                phone: lead.phone || null,
+                website: lead.website || null,
+                business_profile: lead.sourceUrl || null,
+                street: lead.street || null,
+                city: lead.city || null,
+                region: lead.region || null,
+                postal_code: lead.postalCode || null,
+                address: lead.address || null,
+                category: lead.category || null,
+                source_url: lead.sourceUrl || null,
+                country: "US",
+                raw_location: location,
+              })),
+            );
+          }
+        } catch (scrapeError) {
+          console.error(`[Task ${taskId}] Bing Places error in cycle ${currentCycle}:`, scrapeError);
+          // Continue with other sources
+        }
+      }
+
+      // Save leads from this cycle to database
+      if (supabase && cycleLeads.length > 0) {
+        accumulatedLeads.push(...cycleLeads);
+        const { error: leadsError } = await supabase
+          .from("leads")
+          .upsert(cycleLeads, { onConflict: "name,phone" });
+
+        if (leadsError) {
+          supabaseLogs.leadsUpsertError = leadsError.message;
+          console.error(`[Task ${taskId}] Error saving leads in cycle ${currentCycle}:`, leadsError);
+        } else {
+          console.log(`[Task ${taskId}] Saved ${cycleLeads.length} leads from cycle ${currentCycle}`);
+        }
+      }
+
+      // Update task status with current progress
+      const cycleLeadsCount =
+        (yellowPagesResult?.leads.length ?? 0) +
+        (yelpSerpResult?.leads.length ?? 0) +
+        (googleMapsResult?.leads.length ?? 0) +
+        (bingPlacesResult?.leads.length ?? 0);
+
+      // Count unique leads accumulated so far (using Set to deduplicate by name+phone)
+      const uniqueLeads = new Set(
+        accumulatedLeads.map((l) => `${l.name}|${l.phone || ""}`),
+      );
+      totalLeadsCount = uniqueLeads.size;
+
+      // Update task in database with current progress
+      if (supabase) {
+        await supabase
+          .from("scrape_tasks")
+          .update({
+            leads_count: totalLeadsCount,
+            review_reason:
+              totalLeadsCount < MIN_LEADS_PER_SOURCE
+                ? `Cycle ${currentCycle}/${MAX_CYCLES}: ${totalLeadsCount} leads (Target: ${MIN_LEADS_PER_SOURCE}+)`
                 : null,
-          },
-          { status: 502 },
-        );
+          })
+          .eq("id", taskId);
       }
 
-      processedSources.push("yellow_pages");
-
-      if (yellowPagesResult.leads.length > 0 && supabase) {
-        leadsToInsert.push(
-          ...yellowPagesResult.leads.map((lead) => ({
-            task_id: taskId,
-            source: "yellow_pages",
-            keyword,
-            location,
-            name: lead.name,
-            phone: lead.phone || null,
-            website: lead.website || null,
-            business_profile: lead.sourceUrl || null,
-            street: lead.street || null,
-            city: lead.city || null,
-            region: lead.region || null,
-            postal_code: lead.postalCode || null,
-            address: lead.address || null,
-            category: lead.category || null,
-            source_url: lead.sourceUrl || null,
-            country: "US",
-            raw_location: location,
-          })),
+      // If we've reached the minimum, break out of the loop
+      if (totalLeadsCount >= MIN_LEADS_PER_SOURCE) {
+        console.log(
+          `[Task ${taskId}] Reached minimum of ${MIN_LEADS_PER_SOURCE} leads after ${currentCycle} cycles`,
         );
+        break;
+      }
+
+      // If we haven't reached the minimum and there are more cycles, wait before next cycle
+      if (currentCycle < MAX_CYCLES && totalLeadsCount < MIN_LEADS_PER_SOURCE) {
+        console.log(
+          `[Task ${taskId}] Only ${totalLeadsCount} leads after cycle ${currentCycle}, waiting ${CYCLE_DELAY_MS}ms before next cycle...`,
+        );
+        await new Promise((resolve) => setTimeout(resolve, CYCLE_DELAY_MS));
       }
     }
 
-    if (sources.includes("yelp")) {
-      try {
-        yelpResult = await scrapeYelp({
-          keyword,
-          location,
-          limit: MAX_LEADS_PER_SOURCE,
-        });
-      } catch (scrapeError) {
-        return NextResponse.json(
-          {
-            error:
-              scrapeError instanceof Error
-                ? scrapeError.message
-                : "Yelp scrape failed",
-            source: "yelp",
-          },
-          { status: 502 },
-        );
-      }
+    const hasMinimum = totalLeadsCount >= MIN_LEADS_PER_SOURCE;
 
-      processedSources.push("yelp");
-
-      if (yelpResult.leads.length > 0 && supabase) {
-        leadsToInsert.push(
-          ...yelpResult.leads.map((lead) => ({
-            task_id: taskId,
-            source: "yelp",
-            keyword,
-            location,
-            name: lead.name,
-            phone: lead.phone || null,
-            website: lead.website || null,
-            business_profile: lead.sourceUrl || null,
-            street: lead.street || null,
-            city: lead.city || null,
-            region: lead.region || null,
-            postal_code: lead.postalCode || null,
-            address: lead.address || null,
-            category: lead.category || null,
-            source_url: lead.sourceUrl || null,
-            country: "US",
-            raw_location: location,
-          })),
-        );
-      }
-    }
-
-    if (supabase && leadsToInsert.length > 0) {
-      const { error: leadsError } = await supabase
-        .from("leads")
-        .upsert(leadsToInsert, { onConflict: "name,phone" });
-
-      if (leadsError) {
-        supabaseLogs.leadsUpsertError = leadsError.message;
-      }
-    }
-
-    const leadsCount =
-      (yellowPagesResult?.leads.length ?? 0) + (yelpResult?.leads.length ?? 0);
-    const hasMinimum = leadsCount >= MIN_LEADS_PER_SOURCE;
-
+    // Finalize task status
     if (supabase) {
       const finalStatus = hasMinimum ? "completed" : "failed";
       const reviewReason = hasMinimum
         ? null
-        : `Only ${leadsCount} leads found (Target: ${MIN_LEADS_PER_SOURCE}+)`;
+        : `After ${currentCycle} cycles: Only ${totalLeadsCount} leads found (Target: ${MIN_LEADS_PER_SOURCE}+)`;
 
       const { error: finalizeError } = await supabase
         .from("scrape_tasks")
         .update({
           status: finalStatus,
           review_reason: reviewReason,
-          leads_count: leadsCount,
+          leads_count: totalLeadsCount,
           finished_at: new Date().toISOString(),
         })
         .eq("id", taskId);
@@ -308,20 +491,8 @@ export async function POST(request: Request) {
       }
     }
 
-    if (!hasMinimum) {
-      return NextResponse.json(
-        {
-          error: `Only ${leadsCount} leads found (Target: ${MIN_LEADS_PER_SOURCE}+)`,
-          taskId,
-          keyword,
-          location,
-          processedSources,
-          yellowPages: yellowPagesResult,
-          supabase: supabaseLogs,
-        },
-        { status: 502 },
-      );
-    }
+    // Release lock before returning
+    releaseLock(taskLockKey);
 
     return NextResponse.json(
       {
@@ -329,16 +500,25 @@ export async function POST(request: Request) {
         keyword,
         location,
         processedSources,
+        cycles: currentCycle,
+        totalLeads: totalLeadsCount,
         yellowPages: yellowPagesResult,
-        yelp: yelpResult,
+        yelp: yelpSerpResult,
+        google: googleMapsResult,
+        bing_places: bingPlacesResult,
         supabase: supabaseLogs,
-        message:
-          "Tarea ejecutada con las fuentes seleccionadas y persistencia en Supabase (si las tablas existen).",
+        message: hasMinimum
+          ? `Tarea completada exitosamente con ${totalLeadsCount} leads después de ${currentCycle} ciclo(s).`
+          : `Tarea finalizada con ${totalLeadsCount} leads después de ${currentCycle} ciclo(s) (objetivo: ${MIN_LEADS_PER_SOURCE}+).`,
       },
-      { status: 201 },
+      { status: hasMinimum ? 201 : 200 },
     );
   } catch (error) {
     console.error("Task creation failed", error);
+    // Release lock on error
+    if (taskLockKey) {
+      releaseLock(taskLockKey);
+    }
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Unknown error" },
       { status: 500 },

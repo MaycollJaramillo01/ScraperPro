@@ -22,6 +22,7 @@ type SourceOption = {
   id: string;
   label: string;
   helper?: string;
+  disabled?: boolean;
 };
 
 const sourceOptions: SourceOption[] = [
@@ -36,21 +37,29 @@ const sourceOptions: SourceOption[] = [
     helper: "Incluye telefonos y websites de Maps",
   },
   { id: "yelp", label: "Yelp", helper: "Reviews y datos locales" },
-  { id: "manta", label: "Manta", helper: "Datos B2B y dueños" },
+  {
+    id: "manta",
+    label: "Manta",
+    helper: "Datos B2B y dueños (próximamente)",
+    disabled: true,
+  },
   {
     id: "paus",
     label: "Páginas Amarillas US (ES)",
-    helper: "Versión en español enfocada a negocios latinos.",
+    helper: "Versión en español enfocada a negocios latinos (próximamente).",
+    disabled: true,
   },
   {
     id: "facebook_places",
     label: "Facebook Places",
-    helper: "Negocios locales pequeños; suele tener WhatsApp/telefono.",
+    helper: "Negocios locales pequeños; suele tener WhatsApp/telefono (próximamente).",
+    disabled: true,
   },
   {
     id: "bing_places",
     label: "Bing Places",
-    helper: "Cobertura alternativa a Google con telefonos y direcciones.",
+    helper: "Cobertura alternativa a Google con telefonos y direcciones (no soportado en SerpApi actual).",
+    disabled: true,
   },
 ];
 
@@ -378,14 +387,21 @@ export function NewTaskForm() {
               <label
                 key={option.id}
                 className={cn(
-                  "flex cursor-pointer items-start gap-3 rounded-lg border border-border/60 p-3 transition hover:border-border hover:bg-white/[0.03]",
+                  "flex items-start gap-3 rounded-lg border border-border/60 p-3 transition",
+                  option.disabled
+                    ? "cursor-not-allowed opacity-50"
+                    : "cursor-pointer hover:border-border hover:bg-white/[0.03]",
                   sources.includes(option.id) &&
                     "border-emerald-500/60 bg-emerald-500/5",
                 )}
               >
                 <Checkbox
                   checked={sources.includes(option.id)}
-                  onCheckedChange={() => toggleSource(option.id)}
+                  onCheckedChange={() => {
+                    if (option.disabled) return;
+                    toggleSource(option.id);
+                  }}
+                  disabled={option.disabled}
                   className="mt-1"
                 />
                 <div className="space-y-1">

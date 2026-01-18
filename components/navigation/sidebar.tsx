@@ -1,5 +1,6 @@
 "use client";
 
+import * as React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { navItems } from "@/lib/navigation";
@@ -8,9 +9,37 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Sparkles } from "lucide-react";
+import { getSupabaseClient } from "@/lib/supabase-client";
 
 export function Sidebar() {
   const pathname = usePathname();
+  const [isAdmin, setIsAdmin] = React.useState(false);
+  const [loading, setLoading] = React.useState(true);
+
+  React.useEffect(() => {
+    const checkAdmin = async () => {
+      try {
+        const supabase = getSupabaseClient();
+        const { data: { user } } = await supabase.auth.getUser();
+        
+        if (user) {
+          const { data: userData } = await supabase
+            .from("users")
+            .select("role")
+            .eq("id", user.id)
+            .single();
+          
+          setIsAdmin(userData?.role === "admin" || false);
+        }
+      } catch (error) {
+        console.error("Error checking admin status:", error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    checkAdmin();
+  }, []);
 
   return (
     <aside className="hidden border-r border-border/70 bg-black/40 backdrop-blur lg:flex lg:w-64 xl:w-72">
@@ -26,39 +55,41 @@ export function Sidebar() {
         </div>
 
         <nav className="space-y-1">
-          {navItems.map((item) => {
-            const isActive =
-              item.href === "/"
-                ? pathname === "/"
-                : pathname.startsWith(item.href);
+          {navItems
+            .filter((item) => !item.adminOnly || isAdmin)
+            .map((item) => {
+              const isActive =
+                item.href === "/"
+                  ? pathname === "/"
+                  : pathname.startsWith(item.href);
 
-            return (
-              <Link
-                key={item.title}
-                href={item.href}
-                className={cn(
-                  "group flex items-center justify-between rounded-lg px-3 py-2 text-sm transition-all duration-150",
-                  "hover:bg-white/5 hover:text-foreground",
-                  isActive
-                    ? "bg-white/[0.08] text-white shadow-[0_0_0_1px_rgba(255,255,255,0.08)]"
-                    : "text-muted-foreground",
-                )}
-              >
-                <span className="flex items-center gap-3">
-                  <item.icon className="h-4 w-4" />
-                  {item.title}
-                </span>
-                {item.badge ? (
-                  <Badge
-                    variant={isActive ? "default" : "outline"}
-                    className="rounded-full px-2 py-0 text-[10px]"
-                  >
-                    {item.badge}
-                  </Badge>
-                ) : null}
-              </Link>
-            );
-          })}
+              return (
+                <Link
+                  key={item.title}
+                  href={item.href}
+                  className={cn(
+                    "group flex items-center justify-between rounded-lg px-3 py-2 text-sm transition-all duration-150",
+                    "hover:bg-white/5 hover:text-foreground",
+                    isActive
+                      ? "bg-white/[0.08] text-white shadow-[0_0_0_1px_rgba(255,255,255,0.08)]"
+                      : "text-muted-foreground",
+                  )}
+                >
+                  <span className="flex items-center gap-3">
+                    <item.icon className="h-4 w-4" />
+                    {item.title}
+                  </span>
+                  {item.badge ? (
+                    <Badge
+                      variant={isActive ? "default" : "outline"}
+                      className="rounded-full px-2 py-0 text-[10px]"
+                    >
+                      {item.badge}
+                    </Badge>
+                  ) : null}
+                </Link>
+              );
+            })}
         </nav>
 
         <Separator className="border-border/70" />

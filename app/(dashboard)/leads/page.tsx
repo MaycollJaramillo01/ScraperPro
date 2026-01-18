@@ -11,7 +11,7 @@ function LeadsContent() {
   const taskId = searchParams.get("taskId");
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-5" suppressHydrationWarning>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <p className="text-sm uppercase tracking-[0.16em] text-muted-foreground">
@@ -27,7 +27,9 @@ function LeadsContent() {
           </p>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" onClick={() => window.location.href = '/leads'}>Ver todos</Button>
+          <Button variant="outline" onClick={() => (window.location.href = "/leads")}>
+            Ver todos
+          </Button>
           <Button variant="outline">Exportar Vista</Button>
         </div>
       </div>
