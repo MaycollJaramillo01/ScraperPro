@@ -98,7 +98,7 @@ function GitHubIcon() {
   );
 }
 
-export default function LoginPage() {
+function LoginContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [email, setEmail] = React.useState("");
@@ -360,5 +360,13 @@ export default function LoginPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <React.Suspense fallback={<div className="min-h-screen" />}>
+      <LoginContent />
+    </React.Suspense>
   );
 }
