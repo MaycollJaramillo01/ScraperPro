@@ -15,9 +15,9 @@ export async function PATCH(
     try {
         const supabase = getServiceRoleClient();
 
-        const { error } = await supabase
-            .from("scrape_tasks")
-            .update({ status } as any)
+        const tasksTable = supabase.from("scrape_tasks") as any;
+        const { error } = await tasksTable
+            .update({ status })
             .eq("id", taskId);
 
         if (error) {
@@ -45,9 +45,9 @@ export async function DELETE(
         // First, update leads to remove the task_id reference
         // This keeps the leads in the database so they won't be counted as duplicates
         // in future scrapes (the duplicate check is based on phone/name/address)
-        const { error: leadsError } = await supabase
-            .from("leads")
-            .update({ task_id: null } as any)
+        const leadsTable = supabase.from("leads") as any;
+        const { error: leadsError } = await leadsTable
+            .update({ task_id: null })
             .eq("task_id", taskId);
 
         if (leadsError) {
@@ -56,8 +56,7 @@ export async function DELETE(
         }
 
         // Now delete the task
-        const { error: taskError } = await supabase
-            .from("scrape_tasks")
+        const { error: taskError } = await tasksTable
             .delete()
             .eq("id", taskId);
 
