@@ -25,57 +25,78 @@ export async function GET(
         }
 
         // Generate CSV content
+        const BOM = "\uFEFF";
+        const delimiter = ";";
         const headers = [
-            "Name",
-            "Phone",
-            "Website",
-            "Street",
-            "City",
-            "Region",
-            "Postal Code",
-            "Address",
-            "Category",
-            "Source URL",
-            "Source",
-            "Profile Business",
+            "Nombre",
+            "Teléfono",
+            "Email",
+            "Sitio Web",
+            "Dirección",
+            "Ciudad",
+            "Región",
+            "Código Postal",
+            "País",
+            "Categoría",
+            "Fuente",
+            "URL Fuente",
+            "Fecha Creación",
         ];
 
         interface Lead {
             name?: string;
             phone?: string;
+            email?: string;
             website?: string;
             street?: string;
             city?: string;
             region?: string;
             postal_code?: string;
             address?: string;
+            country?: string;
             category?: string;
-            source_url?: string;
             source?: string;
-            business_profile?: string;
+            source_url?: string;
+            created_at?: string;
         }
 
-        const csvRows = (leads as Lead[]).map((lead) => [
-            `"${(lead.name || "").replace(/"/g, '""')}"`,
-            `"${(lead.phone || "").replace(/"/g, '""')}"`,
-            `"${(lead.website || "").replace(/"/g, '""')}"`,
-            `"${(lead.street || "").replace(/"/g, '""')}"`,
-            `"${(lead.city || "").replace(/"/g, '""')}"`,
-            `"${(lead.region || "").replace(/"/g, '""')}"`,
-            `"${(lead.postal_code || "").replace(/"/g, '""')}"`,
-            `"${(lead.address || "").replace(/"/g, '""')}"`,
-            `"${(lead.category || "").replace(/"/g, '""')}"`,
-            `"${(lead.source_url || "").replace(/"/g, '""')}"`,
-            `"${(lead.source || "").replace(/"/g, '""')}"`,
-            `"${(lead.business_profile || "").replace(/"/g, '""')}"`,
+        const rows = (leads as Lead[]).map((lead) => [
+            lead.name || "",
+            lead.phone || "",
+            lead.email || "",
+            lead.website || "",
+            lead.address || lead.street || "",
+            lead.city || "",
+            lead.region || "",
+            lead.postal_code || "",
+            lead.country || "",
+            lead.category || "",
+            lead.source || "",
+            lead.source_url || "",
+            lead.created_at ? new Date(lead.created_at).toLocaleString() : "",
         ]);
 
-        const csvContent = [headers.join(","), ...csvRows.map((row) => row.join(","))].join("\n");
+        const escapeCSV = (value: string) => {
+            if (
+                value.includes(delimiter) ||
+                value.includes('"') ||
+                value.includes("\n")
+            ) {
+                return `"${value.replace(/"/g, '""')}"`;
+            }
+            return value;
+        };
+
+        const csvContent =
+            BOM +
+            headers.map(escapeCSV).join(delimiter) +
+            "\n" +
+            rows.map((row) => row.map(escapeCSV).join(delimiter)).join("\n");
 
         // Return as downloadable file
         return new Response(csvContent, {
             headers: {
-                "Content-Type": "text/csv",
+                "Content-Type": "text/csv; charset=utf-8",
                 "Content-Disposition": `attachment; filename="leads-${taskId.substring(0, 8)}.csv"`,
             },
         });

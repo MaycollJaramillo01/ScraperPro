@@ -6,6 +6,9 @@ import {
   scrapeSerpGoogleMaps,
   scrapeSerpYelp,
   scrapeSerpBingPlaces,
+  scrapeSerpGoogleLocalServices,
+  scrapeSerpGoogleJobs,
+  lookupGoogleMapsContact,
 } from "@/lib/scrapers/serpapi";
 import { getServiceRoleClient } from "@/lib/supabase";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -228,6 +231,10 @@ export async function POST(request: Request) {
     let yelpSerpResult: Awaited<ReturnType<typeof scrapeSerpYelp>> | null = null;
     let bingPlacesResult: Awaited<ReturnType<typeof scrapeSerpBingPlaces>> | null =
       null;
+    let googleLocalServicesResult: Awaited<ReturnType<typeof scrapeSerpGoogleLocalServices>> | null =
+      null;
+    let googleJobsResult: Awaited<ReturnType<typeof scrapeSerpGoogleJobs>> | null =
+      null;
     
     // Execute scraping cycles until we reach 300 leads or max cycles
     let currentCycle = 0;
@@ -286,43 +293,95 @@ export async function POST(request: Request) {
       }
 
       if (sources.includes("yelp")) {
+        let yelpLeadsResult:
+          | Awaited<ReturnType<typeof scrapeYelp>>
+          | Awaited<ReturnType<typeof scrapeSerpYelp>>
+          | null = null;
+
         try {
-          yelpSerpResult = await scrapeSerpYelp({
+          yelpResult = await scrapeYelp({
             keyword,
             location,
             limit: MAX_LEADS_PER_SOURCE,
           });
 
-          if (!processedSources.includes("yelp")) {
-            processedSources.push("yelp");
+          if (yelpResult.error) {
+            throw new Error(yelpResult.error);
           }
 
-          if (yelpSerpResult.leads.length > 0) {
-            cycleLeads.push(
-              ...yelpSerpResult.leads.map((lead) => ({
-                task_id: taskId,
-                source: "yelp",
-                keyword,
-                location,
-                name: lead.name,
-                phone: lead.phone || null,
-                website: lead.website || null,
-                business_profile: lead.sourceUrl || null,
-                street: lead.street || null,
-                city: lead.city || null,
-                region: lead.region || null,
-                postal_code: lead.postalCode || null,
-                address: lead.address || null,
-                category: lead.category || null,
-                source_url: lead.sourceUrl || null,
-                country: "US",
-                raw_location: location,
-              })),
+          yelpLeadsResult = yelpResult;
+        } catch (scrapeError) {
+          console.warn(
+            `[Task ${taskId}] Yelp Fusion failed; falling back to SerpApi in cycle ${currentCycle}:`,
+            scrapeError,
+          );
+          try {
+            yelpSerpResult = await scrapeSerpYelp({
+              keyword,
+              location,
+              limit: MAX_LEADS_PER_SOURCE,
+            });
+            yelpLeadsResult = yelpSerpResult;
+          } catch (fallbackError) {
+            console.error(
+              `[Task ${taskId}] Yelp error in cycle ${currentCycle}:`,
+              fallbackError,
             );
           }
-        } catch (scrapeError) {
-          console.error(`[Task ${taskId}] Yelp error in cycle ${currentCycle}:`, scrapeError);
-          // Continue with other sources
+        }
+
+        if (!processedSources.includes("yelp")) {
+          processedSources.push("yelp");
+        }
+
+        if (yelpLeadsResult?.leads.length) {
+          const MAX_YELP_ENRICH_LOOKUPS = 25;
+          let enrichCount = 0;
+
+          for (const lead of yelpLeadsResult.leads) {
+            if (!lead.phone && enrichCount < MAX_YELP_ENRICH_LOOKUPS) {
+              const match = await lookupGoogleMapsContact({
+                name: lead.name,
+                location,
+                address: lead.address || lead.street || null,
+              });
+
+              if (match) {
+                lead.phone = lead.phone || match.phone;
+                lead.website = lead.website || match.website;
+                lead.sourceUrl = lead.sourceUrl || match.sourceUrl;
+                lead.address = lead.address || match.address;
+                lead.street = lead.street || match.street;
+                lead.city = lead.city || match.city;
+                lead.region = lead.region || match.region;
+                lead.postalCode = lead.postalCode || match.postalCode;
+              }
+
+              enrichCount += 1;
+            }
+          }
+
+          cycleLeads.push(
+            ...yelpLeadsResult.leads.map((lead) => ({
+              task_id: taskId,
+              source: lead.source || "yelp",
+              keyword,
+              location,
+              name: lead.name,
+              phone: lead.phone || null,
+              website: lead.website || null,
+              business_profile: lead.sourceUrl || null,
+              street: lead.street || null,
+              city: lead.city || null,
+              region: lead.region || null,
+              postal_code: lead.postalCode || null,
+              address: lead.address || null,
+              category: lead.category || null,
+              source_url: lead.sourceUrl || null,
+              country: "US",
+              raw_location: location,
+            })),
+          );
         }
       }
 
@@ -408,6 +467,90 @@ export async function POST(request: Request) {
         }
       }
 
+      // Google Local Services - Verified service providers
+      if (sources.includes("google_local_services")) {
+        try {
+          googleLocalServicesResult = await scrapeSerpGoogleLocalServices({
+            keyword,
+            location,
+            limit: MAX_LEADS_PER_SOURCE,
+          });
+
+          if (!processedSources.includes("google_local_services")) {
+            processedSources.push("google_local_services");
+          }
+
+          if (!googleLocalServicesResult.error && googleLocalServicesResult.leads.length > 0) {
+            cycleLeads.push(
+              ...googleLocalServicesResult.leads.map((lead) => ({
+                task_id: taskId,
+                source: "google_local_services",
+                keyword,
+                location,
+                name: lead.name,
+                phone: lead.phone || null,
+                website: lead.website || null,
+                business_profile: lead.sourceUrl || null,
+                street: lead.street || null,
+                city: lead.city || null,
+                region: lead.region || null,
+                postal_code: lead.postalCode || null,
+                address: lead.address || null,
+                category: lead.category || null,
+                source_url: lead.sourceUrl || null,
+                country: "US",
+                raw_location: location,
+              })),
+            );
+          }
+        } catch (scrapeError) {
+          console.error(`[Task ${taskId}] Google Local Services error in cycle ${currentCycle}:`, scrapeError);
+          // Continue with other sources
+        }
+      }
+
+      // Google Jobs - Companies that are hiring
+      if (sources.includes("google_jobs")) {
+        try {
+          googleJobsResult = await scrapeSerpGoogleJobs({
+            keyword,
+            location,
+            limit: MAX_LEADS_PER_SOURCE,
+          });
+
+          if (!processedSources.includes("google_jobs")) {
+            processedSources.push("google_jobs");
+          }
+
+          if (!googleJobsResult.error && googleJobsResult.leads.length > 0) {
+            cycleLeads.push(
+              ...googleJobsResult.leads.map((lead) => ({
+                task_id: taskId,
+                source: "google_jobs",
+                keyword,
+                location,
+                name: lead.name,
+                phone: lead.phone || null,
+                website: lead.website || null,
+                business_profile: lead.sourceUrl || null,
+                street: lead.street || null,
+                city: lead.city || null,
+                region: lead.region || null,
+                postal_code: lead.postalCode || null,
+                address: lead.address || null,
+                category: lead.category || null,
+                source_url: lead.sourceUrl || null,
+                country: "US",
+                raw_location: location,
+              })),
+            );
+          }
+        } catch (scrapeError) {
+          console.error(`[Task ${taskId}] Google Jobs error in cycle ${currentCycle}:`, scrapeError);
+          // Continue with other sources
+        }
+      }
+
       // Save leads from this cycle to database
       if (supabase && cycleLeads.length > 0) {
         accumulatedLeads.push(...cycleLeads);
@@ -424,9 +567,11 @@ export async function POST(request: Request) {
       }
 
       // Update task status with current progress
+      const yelpLeadsCount =
+        yelpResult?.leads.length ?? yelpSerpResult?.leads.length ?? 0;
       const cycleLeadsCount =
         (yellowPagesResult?.leads.length ?? 0) +
-        (yelpSerpResult?.leads.length ?? 0) +
+        yelpLeadsCount +
         (googleMapsResult?.leads.length ?? 0) +
         (bingPlacesResult?.leads.length ?? 0);
 
@@ -503,7 +648,7 @@ export async function POST(request: Request) {
         cycles: currentCycle,
         totalLeads: totalLeadsCount,
         yellowPages: yellowPagesResult,
-        yelp: yelpSerpResult,
+        yelp: yelpResult ?? yelpSerpResult,
         google: googleMapsResult,
         bing_places: bingPlacesResult,
         supabase: supabaseLogs,

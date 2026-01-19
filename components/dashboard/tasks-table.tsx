@@ -6,9 +6,11 @@ import {
   flexRender,
   getCoreRowModel,
   useReactTable,
+  RowSelectionState,
 } from "@tanstack/react-table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Table,
   TableBody,
@@ -17,7 +19,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { ArrowUpRight } from "lucide-react";
+import { ArrowUpRight, Trash2, Download, FileSpreadsheet, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useRouter } from "next/navigation";
 
@@ -34,6 +36,13 @@ type TaskRow = {
   leads: number;
   createdAt: string;
 };
+
+interface ExportRecord {
+  taskIds: string[];
+  exportedAt: string;
+  leadsCount: number;
+  filename: string;
+}
 
 const statusTone: Record<
   TaskStatus,
@@ -71,49 +80,6 @@ const statusTone: Record<
   },
 };
 
-const demoTasks: TaskRow[] = [
-  {
-    id: "T-2048",
-    fullId: "T-2048",
-    searchTerm: "Pizzerías",
-    location: "Madrid, ES",
-    status: "completed",
-    sources: ["Google", "Yelp", "Manta"],
-    leads: 126,
-    createdAt: "Hace 4h",
-  },
-  {
-    id: "T-2047",
-    fullId: "T-2047",
-    searchTerm: "Clínicas dentales",
-    location: "Ciudad de México",
-    status: "running",
-    sources: ["Google", "MapQuest"],
-    leads: 78,
-    createdAt: "Hace 10m",
-  },
-  {
-    id: "T-2046",
-    fullId: "T-2046",
-    searchTerm: "Coffee shops",
-    location: "Austin, TX",
-    status: "pending",
-    sources: ["Yelp", "Manta", "Google"],
-    leads: 0,
-    createdAt: "Hace 6m",
-  },
-  {
-    id: "T-2045",
-    fullId: "T-2045",
-    searchTerm: "Hoteles boutique",
-    location: "Buenos Aires",
-    status: "failed",
-    sources: ["Yelp", "MapQuest"],
-    leads: 0,
-    createdAt: "Hace 1h",
-  },
-];
-
 function StatusBadge({ status }: { status: TaskStatus }) {
   const tone = statusTone[status];
 
@@ -147,10 +113,53 @@ function Sources({ sources }: { sources: string[] }) {
   );
 }
 
+// Helper to get export history from localStorage
+function getExportHistory(): ExportRecord[] {
+  if (typeof window === "undefined") return [];
+  const history = localStorage.getItem("exportHistory");
+  return history ? JSON.parse(history) : [];
+}
+
+// Helper to save export history to localStorage
+function saveExportHistory(records: ExportRecord[]) {
+  if (typeof window === "undefined") return;
+  localStorage.setItem("exportHistory", JSON.stringify(records));
+}
+
+// Check if tasks have been exported before
+function checkPreviousExport(taskIds: string[]): ExportRecord | null {
+  const history = getExportHistory();
+  const sortedIds = [...taskIds].sort().join(",");
+  
+  return history.find(record => {
+    const recordIds = [...record.taskIds].sort().join(",");
+    return recordIds === sortedIds;
+  }) || null;
+}
+
+// Add export record
+function addExportRecord(taskIds: string[], leadsCount: number, filename: string) {
+  const history = getExportHistory();
+  const newRecord: ExportRecord = {
+    taskIds,
+    exportedAt: new Date().toISOString(),
+    leadsCount,
+    filename,
+  };
+  history.unshift(newRecord);
+  // Keep only last 100 records
+  saveExportHistory(history.slice(0, 100));
+}
+
 export function TasksTable() {
   const [tasks, setTasks] = React.useState<TaskRow[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
+  const [rowSelection, setRowSelection] = React.useState<RowSelectionState>({});
+  const [exporting, setExporting] = React.useState(false);
+  const [showDuplicateWarning, setShowDuplicateWarning] = React.useState(false);
+  const [duplicateExportInfo, setDuplicateExportInfo] = React.useState<ExportRecord | null>(null);
+  const [pendingExport, setPendingExport] = React.useState<string[] | null>(null);
 
   const router = useRouter();
 
@@ -220,6 +229,110 @@ export function TasksTable() {
     }
   };
 
+  const deleteTask = async (taskId: string, leadsCount: number) => {
+    const confirmMessage = leadsCount > 0
+      ? `¿Estás seguro de eliminar esta tarea? Los ${leadsCount} leads asociados se conservarán y no se contarán como duplicados en futuros scrapes.`
+      : "¿Estás seguro de eliminar esta tarea?";
+    
+    if (!confirm(confirmMessage)) return;
+
+    try {
+      const response = await fetch(`/api/tasks/${taskId}`, {
+        method: "DELETE",
+      });
+
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Failed to delete task");
+
+      fetchTasks();
+    } catch (err) {
+      alert("Error eliminando tarea: " + (err instanceof Error ? err.message : "Error desconocido"));
+    }
+  };
+
+  // Get selected task IDs
+  const selectedTaskIds = React.useMemo(() => {
+    return Object.keys(rowSelection)
+      .filter(key => rowSelection[key])
+      .map(index => tasks[parseInt(index)]?.fullId)
+      .filter(Boolean);
+  }, [rowSelection, tasks]);
+
+  // Get total leads count for selected tasks
+  const selectedLeadsCount = React.useMemo(() => {
+    return Object.keys(rowSelection)
+      .filter(key => rowSelection[key])
+      .reduce((sum, index) => sum + (tasks[parseInt(index)]?.leads || 0), 0);
+  }, [rowSelection, tasks]);
+
+  // Bulk export function
+  const handleBulkExport = async (taskIds: string[], skipDuplicateCheck = false) => {
+    if (taskIds.length === 0) return;
+
+    // Check for previous export
+    if (!skipDuplicateCheck) {
+      const previousExport = checkPreviousExport(taskIds);
+      if (previousExport) {
+        setDuplicateExportInfo(previousExport);
+        setPendingExport(taskIds);
+        setShowDuplicateWarning(true);
+        return;
+      }
+    }
+
+    setExporting(true);
+    try {
+      const response = await fetch("/api/tasks/bulk-export", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ taskIds }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || "Export failed");
+      }
+
+      const blob = await response.blob();
+      const contentDisposition = response.headers.get("Content-Disposition");
+      const filenameMatch = contentDisposition?.match(/filename="(.+)"/);
+      const filename = filenameMatch ? filenameMatch[1] : `leads-bulk-${Date.now()}.xlsx`;
+
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+
+      // Save export record
+      addExportRecord(taskIds, selectedLeadsCount, filename);
+
+      // Clear selection
+      setRowSelection({});
+    } catch (err) {
+      alert("Error exportando: " + (err instanceof Error ? err.message : "Error desconocido"));
+    } finally {
+      setExporting(false);
+      setShowDuplicateWarning(false);
+      setPendingExport(null);
+      setDuplicateExportInfo(null);
+    }
+  };
+
+  // Handle duplicate warning response
+  const handleDuplicateResponse = (proceed: boolean) => {
+    if (proceed && pendingExport) {
+      handleBulkExport(pendingExport, true);
+    } else {
+      setShowDuplicateWarning(false);
+      setPendingExport(null);
+      setDuplicateExportInfo(null);
+    }
+  };
+
   React.useEffect(() => {
     fetchTasks();
     const interval = setInterval(fetchTasks, 15000); // Refresh every 15s
@@ -228,6 +341,31 @@ export function TasksTable() {
 
   const columns = React.useMemo<ColumnDef<TaskRow>[]>(
     () => [
+      {
+        id: "select",
+        header: ({ table }) => (
+          <Checkbox
+            checked={
+              table.getIsAllPageRowsSelected() ||
+              (table.getIsSomePageRowsSelected() && "indeterminate")
+            }
+            onCheckedChange={(value) => table.toggleAllPageRowsSelected(!!value)}
+            aria-label="Seleccionar todo"
+            className="border-white/30"
+          />
+        ),
+        cell: ({ row }) => (
+          <Checkbox
+            checked={row.getIsSelected()}
+            onCheckedChange={(value) => row.toggleSelected(!!value)}
+            aria-label="Seleccionar fila"
+            className="border-white/30"
+            disabled={row.original.leads === 0}
+          />
+        ),
+        enableSorting: false,
+        enableHiding: false,
+      },
       {
         accessorKey: "searchTerm",
         header: "Búsqueda",
@@ -299,6 +437,29 @@ export function TasksTable() {
                   Ignorar
                 </Button>
               </>
+            ) : row.original.status === "failed" ? (
+              <>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 text-[11px] text-red-400 hover:bg-red-500/10 hover:text-red-300"
+                  onClick={() => deleteTask(row.original.fullId, row.original.leads)}
+                >
+                  <Trash2 className="mr-1 h-3 w-3" />
+                  Eliminar
+                </Button>
+                {row.original.leads > 0 && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 text-[11px] text-emerald-300 hover:bg-emerald-500/10 hover:text-emerald-200"
+                    onClick={() => downloadCSV(row.original.fullId)}
+                  >
+                    Exportar CSV
+                    <ArrowUpRight className="ml-1 h-3 w-3" />
+                  </Button>
+                )}
+              </>
             ) : (
               <>
                 <Button
@@ -332,10 +493,53 @@ export function TasksTable() {
     data: tasks,
     columns,
     getCoreRowModel: getCoreRowModel(),
+    onRowSelectionChange: setRowSelection,
+    state: {
+      rowSelection,
+    },
+    enableRowSelection: (row) => row.original.leads > 0,
   });
 
   return (
     <div className="overflow-hidden rounded-2xl border border-border/70 bg-black/40 shadow-[0_20px_50px_-35px_rgba(0,0,0,0.85)]">
+      {/* Duplicate Export Warning Modal */}
+      {showDuplicateWarning && duplicateExportInfo && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="mx-4 w-full max-w-md rounded-xl border border-amber-500/30 bg-zinc-900 p-6 shadow-2xl">
+            <div className="mb-4 flex items-center gap-3 text-amber-400">
+              <AlertTriangle className="h-6 w-6" />
+              <h3 className="text-lg font-semibold">Exportación duplicada</h3>
+            </div>
+            <p className="mb-2 text-sm text-zinc-300">
+              Estas tareas ya fueron exportadas anteriormente:
+            </p>
+            <div className="mb-4 rounded-lg bg-zinc-800/50 p-3 text-xs text-zinc-400">
+              <p><strong>Fecha:</strong> {new Date(duplicateExportInfo.exportedAt).toLocaleString()}</p>
+              <p><strong>Archivo:</strong> {duplicateExportInfo.filename}</p>
+              <p><strong>Leads:</strong> {duplicateExportInfo.leadsCount}</p>
+            </div>
+            <p className="mb-4 text-sm text-zinc-400">
+              ¿Deseas exportar de nuevo o cancelar?
+            </p>
+            <div className="flex gap-3">
+              <Button
+                variant="outline"
+                className="flex-1 border-zinc-700"
+                onClick={() => handleDuplicateResponse(false)}
+              >
+                Cancelar
+              </Button>
+              <Button
+                className="flex-1 bg-amber-600 hover:bg-amber-700"
+                onClick={() => handleDuplicateResponse(true)}
+              >
+                Exportar de nuevo
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="flex items-center justify-between border-b border-border/70 px-4 py-3">
         <div>
           <p className="text-sm font-semibold text-white">Tareas recientes</p>
@@ -343,9 +547,22 @@ export function TasksTable() {
             {loading ? "Actualizando cola..." : "Procesamiento asíncrono en la cola de scraping."}
           </p>
         </div>
-        <Badge variant="outline" className="border-white/10 text-xs">
-          Auto-refresh 15s
-        </Badge>
+        <div className="flex items-center gap-2">
+          {selectedTaskIds.length > 0 && (
+            <Button
+              size="sm"
+              className="gap-2 bg-emerald-600 hover:bg-emerald-700"
+              onClick={() => handleBulkExport(selectedTaskIds)}
+              disabled={exporting}
+            >
+              <FileSpreadsheet className="h-4 w-4" />
+              {exporting ? "Exportando..." : `Exportar ${selectedTaskIds.length} tareas (${selectedLeadsCount} leads)`}
+            </Button>
+          )}
+          <Badge variant="outline" className="border-white/10 text-xs">
+            Auto-refresh 15s
+          </Badge>
+        </div>
       </div>
 
       {error && (
@@ -379,7 +596,13 @@ export function TasksTable() {
         </TableHeader>
         <TableBody>
           {table.getRowModel().rows.map((row) => (
-            <TableRow key={row.id} className="hover:bg-white/[0.03]">
+            <TableRow 
+              key={row.id} 
+              className={cn(
+                "hover:bg-white/[0.03]",
+                row.getIsSelected() && "bg-emerald-500/10"
+              )}
+            >
               {row.getVisibleCells().map((cell) => (
                 <TableCell key={cell.id}>
                   {flexRender(cell.column.columnDef.cell, cell.getContext())}
@@ -389,6 +612,12 @@ export function TasksTable() {
           ))}
         </TableBody>
       </Table>
+
+      {selectedTaskIds.length > 0 && (
+        <div className="border-t border-border/70 bg-emerald-500/5 px-4 py-2 text-xs text-emerald-300">
+          {selectedTaskIds.length} tarea(s) seleccionada(s) • {selectedLeadsCount} leads totales
+        </div>
+      )}
     </div>
   );
 }

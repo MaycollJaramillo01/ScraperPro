@@ -33,10 +33,20 @@ const sourceOptions: SourceOption[] = [
   },
   {
     id: "google",
-    label: "Google Business Profile",
+    label: "Google Maps",
     helper: "Incluye telefonos y websites de Maps",
   },
   { id: "yelp", label: "Yelp", helper: "Reviews y datos locales" },
+  {
+    id: "google_local_services",
+    label: "Google Local Services",
+    helper: "Proveedores verificados por Google (plomeros, electricistas, abogados, etc.)",
+  },
+  {
+    id: "google_jobs",
+    label: "Google Jobs",
+    helper: "Empresas que están contratando - indica negocios activos/en crecimiento",
+  },
   {
     id: "manta",
     label: "Manta",

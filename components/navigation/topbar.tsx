@@ -1,11 +1,26 @@
+"use client";
+
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { MobileNav } from "@/components/navigation/mobile-nav";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
-import { Bell, CircleUserRound, Download } from "lucide-react";
+import { Bell, CircleUserRound, Download, LogOut } from "lucide-react";
 
 export function Topbar() {
+  const router = useRouter();
+
+  const handleLogout = async () => {
+    try {
+      await fetch("/api/auth/logout", { method: "POST" });
+      router.push("/login");
+      router.refresh();
+    } catch (error) {
+      console.error("Logout error:", error);
+    }
+  };
+
   return (
     <header className="sticky top-0 z-30 flex items-center justify-between gap-3 border-b border-border/70 bg-black/30 px-4 py-3 backdrop-blur">
       <div className="flex items-center gap-3">
@@ -44,8 +59,17 @@ export function Topbar() {
         </Button>
         <div className="flex items-center gap-2 rounded-full border border-border/60 px-3 py-1 text-sm text-muted-foreground">
           <CircleUserRound className="h-4 w-4" />
-          Equipo RevOps
+          Admin
         </div>
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={handleLogout}
+          title="Cerrar sesión"
+        >
+          <LogOut className="h-4 w-4" />
+          <span className="sr-only">Cerrar sesión</span>
+        </Button>
       </div>
     </header>
   );
