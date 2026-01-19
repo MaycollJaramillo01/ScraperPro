@@ -25,6 +25,42 @@ type SourceOption = {
   disabled?: boolean;
 };
 
+const latinoNiches = [
+  { value: "construction", label: "Construction / Construcción" },
+  { value: "drywall contractor", label: "Drywall / Paneles de yeso" },
+  { value: "landscaping", label: "Landscaping / Jardinería" },
+  { value: "roofing contractor", label: "Roofing / Techos" },
+  { value: "painting contractor", label: "Painting / Pintura" },
+  { value: "remodeling", label: "Remodeling / Remodelación" },
+  { value: "handyman", label: "Handyman / Reparaciones" },
+  { value: "flooring contractor", label: "Flooring / Pisos" },
+  { value: "concrete contractor", label: "Concrete / Concreto" },
+  { value: "fencing contractor", label: "Fencing / Cercas" },
+  { value: "tree service", label: "Tree Service / Árboles" },
+  { value: "plumber", label: "Plomería" },
+  { value: "electrician", label: "Electricista" },
+  { value: "hvac contractor", label: "HVAC / Aire Acondicionado" },
+  { value: "house cleaning", label: "Limpieza de casas" },
+  { value: "janitorial service", label: "Limpieza comercial" },
+  { value: "moving company", label: "Mudanzas" },
+  { value: "junk removal", label: "Junk Removal / Retiro de basura" },
+  { value: "auto repair", label: "Auto Repair / Mecánico" },
+  { value: "towing service", label: "Grua / Towing" },
+  { value: "restaurant", label: "Restaurante" },
+  { value: "mexican restaurant", label: "Restaurante mexicano" },
+  { value: "bakery", label: "Panadería" },
+  { value: "catering", label: "Catering / Banquetes" },
+  { value: "barber shop", label: "Barbería" },
+  { value: "beauty salon", label: "Salón de belleza" },
+  { value: "nail salon", label: "Nails / Manicure" },
+  { value: "tax preparation", label: "Tax Prep / Impuestos" },
+  { value: "insurance agency", label: "Agencia de seguros" },
+  { value: "real estate", label: "Bienes raíces" },
+  { value: "notary public", label: "Notaría" },
+  { value: "immigration lawyer", label: "Abogado de inmigración" },
+  { value: "trucking company", label: "Trucking / Transporte" },
+];
+
 const sourceOptions: SourceOption[] = [
   {
     id: "yellow_pages",
@@ -290,13 +326,18 @@ export function NewTaskForm() {
             <div className="grid gap-4 md:grid-cols-2">
               <div className="space-y-2">
                 <Label htmlFor="keyword">Palabra clave / Nicho</Label>
-                <Input
-                  id="keyword"
-                  placeholder="Ej. Pizzerias"
-                  value={keyword}
-                  onChange={(e) => setKeyword(e.target.value)}
-                  required
-                />
+                <Select value={keyword} onValueChange={setKeyword}>
+                  <SelectTrigger id="keyword">
+                    <SelectValue placeholder="Selecciona un nicho" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {latinoNiches.map((niche) => (
+                      <SelectItem key={niche.value} value={niche.value}>
+                        {niche.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
               <div className="space-y-2">
                 <Label>Estado</Label>

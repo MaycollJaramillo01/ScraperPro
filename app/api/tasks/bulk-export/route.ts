@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getServiceRoleClient } from "@/lib/supabase";
+import { hasPhone } from "@/lib/lead-utils";
 
 export async function POST(request: Request) {
   try {
@@ -25,13 +26,6 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    if (!leads || leads.length === 0) {
-      return NextResponse.json(
-        { error: "No leads found for the selected tasks" },
-        { status: 404 }
-      );
-    }
-
     // Create Excel-compatible CSV with BOM for proper UTF-8 encoding
     const BOM = "\uFEFF";
     const delimiter = ";";
@@ -51,7 +45,9 @@ export async function POST(request: Request) {
       "Fecha Creación",
     ];
 
-    const rows = leads.map((lead: any) => [
+    const rows = (leads || [])
+      .filter((lead: any) => hasPhone(lead.phone || null))
+      .map((lead: any) => [
       lead.name || "",
       lead.phone || "",
       lead.email || "",

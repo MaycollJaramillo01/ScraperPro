@@ -1,5 +1,48 @@
 import { NextResponse } from "next/server";
 import { getServiceRoleClient } from "@/lib/supabase";
+import { getStaleThresholdIso } from "@/lib/task-utils";
+
+const MAX_TASK_RUNTIME_MINUTES = 30;
+
+export async function GET(
+    request: Request,
+    { params }: { params: Promise<{ id: string }> }
+) {
+    const taskId = (await params).id;
+
+    try {
+        const supabase = getServiceRoleClient();
+        const tasksTable = supabase.from("scrape_tasks") as any;
+        const staleThreshold = getStaleThresholdIso(new Date(), MAX_TASK_RUNTIME_MINUTES);
+
+        await tasksTable
+            .update({
+                status: "failed",
+                review_reason: `Timeout: más de ${MAX_TASK_RUNTIME_MINUTES} minutos sin finalizar`,
+                finished_at: new Date().toISOString(),
+            })
+            .eq("status", "running")
+            .lt("created_at", staleThreshold)
+            .eq("id", taskId)
+            .is("finished_at", null);
+
+        const { data, error } = await tasksTable
+            .select("*")
+            .eq("id", taskId)
+            .single();
+
+        if (error || !data) {
+            return NextResponse.json({ error: "Task not found" }, { status: 404 });
+        }
+
+        return NextResponse.json(data);
+    } catch (error) {
+        return NextResponse.json(
+            { error: error instanceof Error ? error.message : "Unknown error" },
+            { status: 500 }
+        );
+    }
+}
 
 export async function PATCH(
     request: Request,

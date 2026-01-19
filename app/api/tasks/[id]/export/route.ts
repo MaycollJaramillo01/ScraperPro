@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getServiceRoleClient } from "@/lib/supabase";
+import { hasPhone } from "@/lib/lead-utils";
 
 export async function GET(
     request: Request,
@@ -18,10 +19,6 @@ export async function GET(
 
         if (error) {
             return NextResponse.json({ error: error.message }, { status: 500 });
-        }
-
-        if (!leads || leads.length === 0) {
-            return NextResponse.json({ error: "No leads found for this task" }, { status: 404 });
         }
 
         // Generate CSV content
@@ -60,7 +57,9 @@ export async function GET(
             created_at?: string;
         }
 
-        const rows = (leads as Lead[]).map((lead) => [
+        const rows = ((leads as Lead[]) || [])
+            .filter((lead) => hasPhone(lead.phone || null))
+            .map((lead) => [
             lead.name || "",
             lead.phone || "",
             lead.email || "",

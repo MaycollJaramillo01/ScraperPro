@@ -460,6 +460,14 @@ export function TasksTable() {
                     <ArrowUpRight className="ml-1 h-3 w-3" />
                   </Button>
                 )}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 text-[11px] text-muted-foreground"
+                  onClick={() => router.push(`/leads?taskId=${row.original.fullId}`)}
+                >
+                  Detalles
+                </Button>
               </>
             ) : (
               <>

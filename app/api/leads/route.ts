@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getServiceRoleClient } from "@/lib/supabase";
+import { hasPhone } from "@/lib/lead-utils";
 
 export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
@@ -19,7 +20,8 @@ export async function GET(request: Request) {
             return NextResponse.json({ error: error.message }, { status: 500 });
         }
 
-        return NextResponse.json(data);
+        const withPhone = (data || []).filter((lead: any) => hasPhone(lead.phone));
+        return NextResponse.json(withPhone);
     } catch (error) {
         return NextResponse.json(
             { error: error instanceof Error ? error.message : "Unknown error" },

@@ -1,6 +1,9 @@
 import sys
 import json
 import argparse
+import os
+import random
+import time
 from curl_cffi import requests
 from bs4 import BeautifulSoup
 
@@ -11,10 +14,17 @@ LATINO_HEAVY_LOCATIONS = [
     "San Diego, CA",
     "San Jose, CA",
     "San Francisco, CA",
+    "Oakland, CA",
     "Fresno, CA",
     "Sacramento, CA",
     "Riverside, CA",
     "Bakersfield, CA",
+    "Santa Ana, CA",
+    "Anaheim, CA",
+    "Long Beach, CA",
+    "Stockton, CA",
+    "Chula Vista, CA",
+    "Modesto, CA",
     # Texas
     "Houston, TX",
     "San Antonio, TX",
@@ -25,29 +35,65 @@ LATINO_HEAVY_LOCATIONS = [
     "McAllen, TX",
     "Brownsville, TX",
     "Laredo, TX",
+    "Corpus Christi, TX",
+    "San Jose, TX",
+    "Irving, TX",
+    "Arlington, TX",
+    "Plano, TX",
+    "Garland, TX",
+    "Grand Prairie, TX",
+    "Amarillo, TX",
+    "Lubbock, TX",
+    "Pasadena, TX",
+    "Mesquite, TX",
     # Florida
     "Miami, FL",
+    "Hialeah, FL",
+    "Homestead, FL",
+    "Fort Lauderdale, FL",
+    "West Palm Beach, FL",
     "Orlando, FL",
     "Tampa, FL",
     "Jacksonville, FL",
+    "Kissimmee, FL",
     # New York / East Coast
     "New York, NY",
+    "Queens, NY",
+    "Bronx, NY",
+    "Brooklyn, NY",
     "Jersey City, NJ",
     "Newark, NJ",
+    "Paterson, NJ",
+    "Elizabeth, NJ",
+    "Union City, NJ",
+    "Trenton, NJ",
     # Midwest
     "Chicago, IL",
+    "Aurora, IL",
+    "Cicero, IL",
+    "Waukegan, IL",
     # Southwest
     "Phoenix, AZ",
     "Tucson, AZ",
+    "Mesa, AZ",
+    "Glendale, AZ",
     "Albuquerque, NM",
+    "Las Cruces, NM",
     "Las Vegas, NV",
+    "Henderson, NV",
+    "Reno, NV",
     "Denver, CO",
     # Southeast
     "Atlanta, GA",
+    "Doral, FL",
+    "Cape Coral, FL",
     "Charlotte, NC",
     "Raleigh, NC",
     # Others con fuerte presencia latina
     "Washington, DC",
+    "San Juan, PR",
+    "Ponce, PR",
+    "Bayamon, PR",
 ]
 
 STATE_FALLBACK_CITY = {
@@ -128,25 +174,58 @@ def parse_locality(locality):
         "postalCode": postal_code
     }
 
+def load_user_agents():
+    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    ua_path = os.path.join(base_dir, "user_agents.txt")
+    try:
+        with open(ua_path, "r", encoding="utf-8") as handle:
+            agents = [line.strip() for line in handle if line.strip()]
+            return agents if agents else []
+    except Exception:
+        return []
+
+def build_headers(user_agent: str):
+    return {
+        "User-Agent": user_agent,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        "Accept-Language": "es-US,es;q=0.9,en;q=0.8",
+        "Upgrade-Insecure-Requests": "1",
+        "Referer": "https://www.google.com/",
+    }
+
 def scrape_location(keyword, location, limit, seen_leads):
     leads = []
     page = 1
     max_pages = 80  # Increased for up to 2000 results (usually ~30 results per page)
 
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Upgrade-Insecure-Requests": "1",
-        "Referer": "https://www.google.com/"
-    }
+    user_agents = load_user_agents()
+    fallback_ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    session = requests.Session()
 
     while len(leads) < limit and page <= max_pages:
         url = f"https://www.yellowpages.com/search?search_terms={keyword}&geo_location_terms={location}&page={page}"
         
         try:
-            # impersonate="chrome120" handles the TLS fingerprinting
-            response = requests.get(url, headers=headers, impersonate="chrome120", timeout=30)
+            response = None
+            for attempt in range(3):
+                user_agent = random.choice(user_agents) if user_agents else fallback_ua
+                headers = build_headers(user_agent)
+                # Warm up session for cookies
+                session.get(
+                    "https://www.yellowpages.com/",
+                    headers=headers,
+                    impersonate="chrome120",
+                    timeout=20,
+                )
+                response = session.get(
+                    url,
+                    headers=headers,
+                    impersonate="chrome120",
+                    timeout=30,
+                )
+                if response.status_code != 403:
+                    break
+                time.sleep(1 + attempt)
             
             if response.status_code != 200:
                 if page == 1:

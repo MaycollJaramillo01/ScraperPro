@@ -13,6 +13,7 @@ import {
 import { getServiceRoleClient } from "@/lib/supabase";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getStaleThresholdIso } from "@/lib/task-utils";
+import { hasPhone } from "@/lib/lead-utils";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -53,6 +54,13 @@ type TaskRequestBody = {
   sources?: string[];
   notes?: string;
 };
+
+type LeadsWithPhone = { phone?: string | null };
+type LeadsResult = { leads: LeadsWithPhone[] };
+
+function countLeadsWithPhone(result?: LeadsResult | null): number {
+  return result?.leads.filter((lead) => hasPhone(lead.phone)).length ?? 0;
+}
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -244,6 +252,7 @@ export async function POST(request: Request) {
     let googleMapsResult: Awaited<ReturnType<typeof scrapeSerpGoogleMaps>> | null =
       null;
     let yelpSerpResult: Awaited<ReturnType<typeof scrapeSerpYelp>> | null = null;
+    let yelpLeadsResult: Awaited<ReturnType<typeof scrapeSerpYelp>> | null = null;
     let bingPlacesResult: Awaited<ReturnType<typeof scrapeSerpBingPlaces>> | null =
       null;
     let googleLocalServicesResult: Awaited<ReturnType<typeof scrapeSerpGoogleLocalServices>> | null =
@@ -263,6 +272,7 @@ export async function POST(request: Request) {
       );
 
       const cycleLeads: typeof accumulatedLeads = [];
+      yelpLeadsResult = null;
 
       // Scrape all sources for this cycle
       if (sources.includes("yellow_pages")) {
@@ -280,7 +290,9 @@ export async function POST(request: Request) {
 
           if (yellowPagesResult.leads.length > 0) {
             cycleLeads.push(
-              ...yellowPagesResult.leads.map((lead) => ({
+              ...yellowPagesResult.leads
+                .filter((lead) => hasPhone(lead.phone))
+                .map((lead) => ({
                 task_id: taskId,
                 source: "yellow_pages",
                 keyword,
@@ -308,41 +320,18 @@ export async function POST(request: Request) {
       }
 
       if (sources.includes("yelp")) {
-        let yelpLeadsResult:
-          | Awaited<ReturnType<typeof scrapeYelp>>
-          | Awaited<ReturnType<typeof scrapeSerpYelp>>
-          | null = null;
-
         try {
-          yelpResult = await scrapeYelp({
+          yelpSerpResult = await scrapeSerpYelp({
             keyword,
             location,
             limit: MAX_LEADS_PER_SOURCE,
           });
-
-          if (yelpResult.error) {
-            throw new Error(yelpResult.error);
-          }
-
-          yelpLeadsResult = yelpResult;
+          yelpLeadsResult = yelpSerpResult;
         } catch (scrapeError) {
-          console.warn(
-            `[Task ${taskId}] Yelp Fusion failed; falling back to SerpApi in cycle ${currentCycle}:`,
+          console.error(
+            `[Task ${taskId}] Yelp SerpApi error in cycle ${currentCycle}:`,
             scrapeError,
           );
-          try {
-            yelpSerpResult = await scrapeSerpYelp({
-              keyword,
-              location,
-              limit: MAX_LEADS_PER_SOURCE,
-            });
-            yelpLeadsResult = yelpSerpResult;
-          } catch (fallbackError) {
-            console.error(
-              `[Task ${taskId}] Yelp error in cycle ${currentCycle}:`,
-              fallbackError,
-            );
-          }
         }
 
         if (!processedSources.includes("yelp")) {
@@ -377,7 +366,9 @@ export async function POST(request: Request) {
           }
 
           cycleLeads.push(
-            ...yelpLeadsResult.leads.map((lead) => ({
+            ...yelpLeadsResult.leads
+              .filter((lead) => hasPhone(lead.phone))
+              .map((lead) => ({
               task_id: taskId,
               source: lead.source || "yelp",
               keyword,
@@ -414,7 +405,9 @@ export async function POST(request: Request) {
 
           if (googleMapsResult.leads.length > 0) {
             cycleLeads.push(
-              ...googleMapsResult.leads.map((lead) => ({
+              ...googleMapsResult.leads
+                .filter((lead) => hasPhone(lead.phone))
+                .map((lead) => ({
                 task_id: taskId,
                 source: "google",
                 keyword,
@@ -455,7 +448,9 @@ export async function POST(request: Request) {
 
           if (!bingPlacesResult.error && bingPlacesResult.leads.length > 0) {
             cycleLeads.push(
-              ...bingPlacesResult.leads.map((lead) => ({
+              ...bingPlacesResult.leads
+                .filter((lead) => hasPhone(lead.phone))
+                .map((lead) => ({
                 task_id: taskId,
                 source: "bing_places",
                 keyword,
@@ -497,7 +492,9 @@ export async function POST(request: Request) {
 
           if (!googleLocalServicesResult.error && googleLocalServicesResult.leads.length > 0) {
             cycleLeads.push(
-              ...googleLocalServicesResult.leads.map((lead) => ({
+              ...googleLocalServicesResult.leads
+                .filter((lead) => hasPhone(lead.phone))
+                .map((lead) => ({
                 task_id: taskId,
                 source: "google_local_services",
                 keyword,
@@ -539,7 +536,9 @@ export async function POST(request: Request) {
 
           if (!googleJobsResult.error && googleJobsResult.leads.length > 0) {
             cycleLeads.push(
-              ...googleJobsResult.leads.map((lead) => ({
+              ...googleJobsResult.leads
+                .filter((lead) => hasPhone(lead.phone))
+                .map((lead) => ({
                 task_id: taskId,
                 source: "google_jobs",
                 keyword,
@@ -568,27 +567,49 @@ export async function POST(request: Request) {
 
       // Save leads from this cycle to database
       if (supabase && cycleLeads.length > 0) {
-        accumulatedLeads.push(...cycleLeads);
-        const { error: leadsError } = await supabase
+        let leadsErrorMessage: string | null = null;
+        const upsertResult = await supabase
           .from("leads")
           .upsert(cycleLeads, { onConflict: "name,phone" });
 
-        if (leadsError) {
-          supabaseLogs.leadsUpsertError = leadsError.message;
-          console.error(`[Task ${taskId}] Error saving leads in cycle ${currentCycle}:`, leadsError);
+        if (upsertResult.error) {
+          const message = upsertResult.error.message || "";
+          const missingConstraint =
+            message.toLowerCase().includes("unique") ||
+            message.toLowerCase().includes("constraint") ||
+            message.toLowerCase().includes("on conflict");
+
+          if (missingConstraint) {
+            const insertResult = await supabase.from("leads").insert(cycleLeads);
+            if (insertResult.error) {
+              leadsErrorMessage = insertResult.error.message;
+            }
+          } else {
+            leadsErrorMessage = message;
+          }
+        }
+
+        if (leadsErrorMessage) {
+          supabaseLogs.leadsUpsertError = leadsErrorMessage;
+          console.error(
+            `[Task ${taskId}] Error saving leads in cycle ${currentCycle}:`,
+            leadsErrorMessage,
+          );
         } else {
+          accumulatedLeads.push(...cycleLeads);
           console.log(`[Task ${taskId}] Saved ${cycleLeads.length} leads from cycle ${currentCycle}`);
         }
       }
 
       // Update task status with current progress
       const yelpLeadsCount =
-        yelpResult?.leads.length ?? yelpSerpResult?.leads.length ?? 0;
+        countLeadsWithPhone(yelpResult as LeadsResult | null) ||
+        countLeadsWithPhone(yelpSerpResult as LeadsResult | null);
       const cycleLeadsCount =
-        (yellowPagesResult?.leads.length ?? 0) +
-        yelpLeadsCount +
-        (googleMapsResult?.leads.length ?? 0) +
-        (bingPlacesResult?.leads.length ?? 0);
+        countLeadsWithPhone(yellowPagesResult as LeadsResult | null) +
+        (countLeadsWithPhone(yelpLeadsResult) || yelpLeadsCount) +
+        countLeadsWithPhone(googleMapsResult as LeadsResult | null) +
+        countLeadsWithPhone(bingPlacesResult as LeadsResult | null);
 
       // Count unique leads accumulated so far (using Set to deduplicate by name+phone)
       const uniqueLeads = new Set(
@@ -628,13 +649,20 @@ export async function POST(request: Request) {
     }
 
     const hasMinimum = totalLeadsCount >= MIN_LEADS_PER_SOURCE;
+    const hasSomeLeads = totalLeadsCount > 0;
 
     // Finalize task status
     if (supabase) {
-      const finalStatus = hasMinimum ? "completed" : "failed";
+      const finalStatus = hasMinimum
+        ? "completed"
+        : hasSomeLeads
+        ? "warning"
+        : "failed";
       const reviewReason = hasMinimum
         ? null
-        : `After ${currentCycle} cycles: Only ${totalLeadsCount} leads found (Target: ${MIN_LEADS_PER_SOURCE}+)`;
+        : hasSomeLeads
+        ? `Rendimiento bajo: ${totalLeadsCount} leads tras ${currentCycle} ciclo(s) (meta: ${MIN_LEADS_PER_SOURCE}+)`
+        : `Sin leads tras ${currentCycle} ciclo(s) (meta: ${MIN_LEADS_PER_SOURCE}+)`;
 
       const { error: finalizeError } = await supabase
         .from("scrape_tasks")
@@ -669,7 +697,9 @@ export async function POST(request: Request) {
         supabase: supabaseLogs,
         message: hasMinimum
           ? `Tarea completada exitosamente con ${totalLeadsCount} leads después de ${currentCycle} ciclo(s).`
-          : `Tarea finalizada con ${totalLeadsCount} leads después de ${currentCycle} ciclo(s) (objetivo: ${MIN_LEADS_PER_SOURCE}+).`,
+          : hasSomeLeads
+          ? `Tarea finalizada con rendimiento bajo: ${totalLeadsCount} leads tras ${currentCycle} ciclo(s) (meta: ${MIN_LEADS_PER_SOURCE}+).`
+          : `Tarea finalizada sin leads tras ${currentCycle} ciclo(s) (meta: ${MIN_LEADS_PER_SOURCE}+).`,
       },
       { status: hasMinimum ? 201 : 200 },
     );

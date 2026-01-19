@@ -23,13 +23,16 @@ export function Sidebar() {
         const { data: { user } } = await supabase.auth.getUser();
         
         if (user) {
-          const { data: userData } = await supabase
-            .from("users")
-            .select("role")
-            .eq("id", user.id)
-            .single();
-          
-          setIsAdmin(userData?.role === "admin" || false);
+          const response = await fetch("/api/auth/check-approval", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ userId: user.id, email: user.email }),
+          });
+
+          if (response.ok) {
+            const data = await response.json();
+            setIsAdmin(data.role === "admin");
+          }
         }
       } catch (error) {
         console.error("Error checking admin status:", error);
