@@ -45,6 +45,7 @@ export async function DELETE(
         // First, update leads to remove the task_id reference
         // This keeps the leads in the database so they won't be counted as duplicates
         // in future scrapes (the duplicate check is based on phone/name/address)
+        const tasksTable = supabase.from("scrape_tasks") as any;
         const leadsTable = supabase.from("leads") as any;
         const { error: leadsError } = await leadsTable
             .update({ task_id: null })
