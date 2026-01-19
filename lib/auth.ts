@@ -28,10 +28,39 @@ export async function getUserByEmail(
   try {
     const supabase = getServiceRoleClient();
     
-    // First check if user exists in auth.users
-    const { data: authUser, error: authError } = await supabase.auth.admin.getUserByEmail(email);
-    
-    if (authError || !authUser?.user) {
+    // First check if user exists in auth.users (Supabase SDK doesn't expose getUserByEmail)
+    const emailLower = email.toLowerCase();
+    const perPage = 200;
+    const maxPages = 25;
+    let page = 1;
+    let authUser: { id: string; email?: string | null } | null = null;
+
+    while (page <= maxPages) {
+      const { data, error: authError } = await supabase.auth.admin.listUsers({
+        page,
+        perPage,
+      });
+
+      if (authError) {
+        return null;
+      }
+
+      const match = data.users.find(
+        (user) => user.email?.toLowerCase() === emailLower,
+      );
+      if (match) {
+        authUser = match;
+        break;
+      }
+
+      if (!data.nextPage || data.users.length < perPage) {
+        break;
+      }
+
+      page = data.nextPage;
+    }
+
+    if (!authUser) {
       return null;
     }
 
@@ -39,13 +68,13 @@ export async function getUserByEmail(
     const { data: userData, error } = await supabase
       .from("users")
       .select("*")
-      .eq("id", authUser.user.id)
+      .eq("id", authUser.id)
       .single();
 
     if (error || !userData) {
       // If user doesn't exist in users table, create it
       const newUser = {
-        id: authUser.user.id,
+        id: authUser.id,
         email: email.toLowerCase(),
         role: isAdminEmail(email) ? "admin" : "user",
         approved: isAdminEmail(email) ? true : false, // Admin is auto-approved
