@@ -115,6 +115,7 @@ export function NewTaskForm() {
   const [stateCode, setStateCode] = useState("");
   const [city, setCity] = useState("");
   const [notes, setNotes] = useState("");
+  const [minStars, setMinStars] = useState("3");
   const [sources, setSources] = useState<string[]>(["yellow_pages"]);
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -277,6 +278,7 @@ export function NewTaskForm() {
           location,
           sources: selectedSources,
           notes,
+          minStars: Number(minStars),
         }),
       });
 
@@ -338,6 +340,24 @@ export function NewTaskForm() {
                     ))}
                   </SelectContent>
                 </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="minStars">Minimo de estrellas</Label>
+                <Select value={minStars} onValueChange={setMinStars}>
+                  <SelectTrigger id="minStars">
+                    <SelectValue placeholder="Selecciona minimo" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {["3", "4", "5"].map((value) => (
+                      <SelectItem key={value} value={value}>
+                        {value}+
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Se aplica a fuentes con rating (Google, Yelp, Local Services).
+                </p>
               </div>
               <div className="space-y-2">
                 <Label>Estado</Label>

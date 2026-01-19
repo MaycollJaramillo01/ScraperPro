@@ -53,13 +53,24 @@ type TaskRequestBody = {
   location?: string;
   sources?: string[];
   notes?: string;
+  minStars?: number;
 };
 
-type LeadsWithPhone = { phone?: string | null };
+type LeadsWithPhone = { phone?: string | null; rating?: number };
 type LeadsResult = { leads: LeadsWithPhone[] };
 
-function countLeadsWithPhone(result?: LeadsResult | null): number {
-  return result?.leads.filter((lead) => hasPhone(lead.phone)).length ?? 0;
+function hasMinStars(lead: LeadsWithPhone, minStars?: number | null): boolean {
+  if (!minStars) return true;
+  if (typeof lead.rating !== "number") return false;
+  return lead.rating >= minStars;
+}
+
+function countLeadsWithPhone(result?: LeadsResult | null, minStars?: number | null): number {
+  return (
+    result?.leads.filter(
+      (lead) => hasMinStars(lead, minStars) && hasPhone(lead.phone),
+    ).length ?? 0
+  );
 }
 
 export async function GET(request: Request) {
@@ -151,6 +162,10 @@ export async function POST(request: Request) {
     const keyword = (body.keyword ?? "").trim();
     const location = (body.location ?? "").trim();
     const notes = typeof body.notes === "string" ? body.notes.trim() : "";
+    const minStarsValue = Number.isFinite(body.minStars) ? Number(body.minStars) : NaN;
+    const minStars = Number.isFinite(minStarsValue)
+      ? Math.min(5, Math.max(1, minStarsValue))
+      : null;
     const sources = Array.isArray(body.sources)
       ? Array.from(
         new Set(
@@ -367,7 +382,7 @@ export async function POST(request: Request) {
 
           cycleLeads.push(
             ...yelpLeadsResult.leads
-              .filter((lead) => hasPhone(lead.phone))
+              .filter((lead) => hasMinStars(lead, minStars) && hasPhone(lead.phone))
               .map((lead) => ({
               task_id: taskId,
               source: lead.source || "yelp",
@@ -406,7 +421,7 @@ export async function POST(request: Request) {
           if (googleMapsResult.leads.length > 0) {
             cycleLeads.push(
               ...googleMapsResult.leads
-                .filter((lead) => hasPhone(lead.phone))
+                .filter((lead) => hasMinStars(lead, minStars) && hasPhone(lead.phone))
                 .map((lead) => ({
                 task_id: taskId,
                 source: "google",
@@ -449,7 +464,7 @@ export async function POST(request: Request) {
           if (!bingPlacesResult.error && bingPlacesResult.leads.length > 0) {
             cycleLeads.push(
               ...bingPlacesResult.leads
-                .filter((lead) => hasPhone(lead.phone))
+                .filter((lead) => hasMinStars(lead, minStars) && hasPhone(lead.phone))
                 .map((lead) => ({
                 task_id: taskId,
                 source: "bing_places",
@@ -493,7 +508,7 @@ export async function POST(request: Request) {
           if (!googleLocalServicesResult.error && googleLocalServicesResult.leads.length > 0) {
             cycleLeads.push(
               ...googleLocalServicesResult.leads
-                .filter((lead) => hasPhone(lead.phone))
+                .filter((lead) => hasMinStars(lead, minStars) && hasPhone(lead.phone))
                 .map((lead) => ({
                 task_id: taskId,
                 source: "google_local_services",
@@ -537,7 +552,7 @@ export async function POST(request: Request) {
           if (!googleJobsResult.error && googleJobsResult.leads.length > 0) {
             cycleLeads.push(
               ...googleJobsResult.leads
-                .filter((lead) => hasPhone(lead.phone))
+                .filter((lead) => hasMinStars(lead, minStars) && hasPhone(lead.phone))
                 .map((lead) => ({
                 task_id: taskId,
                 source: "google_jobs",
@@ -603,13 +618,13 @@ export async function POST(request: Request) {
 
       // Update task status with current progress
       const yelpLeadsCount =
-        countLeadsWithPhone(yelpResult as LeadsResult | null) ||
-        countLeadsWithPhone(yelpSerpResult as LeadsResult | null);
+        countLeadsWithPhone(yelpResult as LeadsResult | null, minStars) ||
+        countLeadsWithPhone(yelpSerpResult as LeadsResult | null, minStars);
       const cycleLeadsCount =
-        countLeadsWithPhone(yellowPagesResult as LeadsResult | null) +
-        (countLeadsWithPhone(yelpLeadsResult) || yelpLeadsCount) +
-        countLeadsWithPhone(googleMapsResult as LeadsResult | null) +
-        countLeadsWithPhone(bingPlacesResult as LeadsResult | null);
+        countLeadsWithPhone(yellowPagesResult as LeadsResult | null, null) +
+        (countLeadsWithPhone(yelpLeadsResult, minStars) || yelpLeadsCount) +
+        countLeadsWithPhone(googleMapsResult as LeadsResult | null, minStars) +
+        countLeadsWithPhone(bingPlacesResult as LeadsResult | null, minStars);
 
       // Count unique leads accumulated so far (using Set to deduplicate by name+phone)
       const uniqueLeads = new Set(

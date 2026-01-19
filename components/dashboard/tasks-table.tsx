@@ -161,12 +161,13 @@ export function TasksTable() {
   const [showDuplicateWarning, setShowDuplicateWarning] = React.useState(false);
   const [duplicateExportInfo, setDuplicateExportInfo] = React.useState<ExportRecord | null>(null);
   const [pendingExport, setPendingExport] = React.useState<string[] | null>(null);
+  const [limit, setLimit] = React.useState("10");
 
   const router = useRouter();
 
   const fetchTasks = React.useCallback(async () => {
     try {
-      const response = await fetch("/api/tasks");
+      const response = await fetch(`/api/tasks?limit=${encodeURIComponent(limit)}`);
       if (!response.ok) {
         throw new Error("Failed to fetch tasks");
       }
@@ -192,7 +193,7 @@ export function TasksTable() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [limit]);
 
   const updateTaskStatus = async (taskId: string, newStatus: TaskStatus) => {
     try {
@@ -571,6 +572,21 @@ export function TasksTable() {
           <Badge variant="outline" className="border-white/10 text-xs">
             Auto-refresh 15s
           </Badge>
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <span>Mostrar</span>
+            <Select value={limit} onValueChange={setLimit}>
+              <SelectTrigger className="h-7 w-[88px] bg-black/30 border-white/10">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {["10", "50", "100", "500"].map((value) => (
+                  <SelectItem key={value} value={value}>
+                    {value}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
         </div>
       </div>
 

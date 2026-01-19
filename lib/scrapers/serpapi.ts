@@ -34,6 +34,11 @@ export type SerpLead = {
   address?: string;
   category?: string;
   sourceUrl?: string;
+  rating?: number;
+  reviews?: number;
+  yearsInBusiness?: number;
+  googleGuaranteed?: boolean;
+  licenseNumber?: string;
   keyword: string;
   location: string;
   source: string;
@@ -121,6 +126,8 @@ export async function scrapeSerpGoogleMaps(input: {
           address: address || undefined,
           category: r.category,
           sourceUrl: r.link || r.spotlight_map_link || r.website,
+          rating: r.rating,
+          reviews: r.reviews,
           keyword: input.keyword,
           location: input.location,
           source: "google_maps_serpapi",
@@ -249,6 +256,8 @@ export async function scrapeSerpYelp(input: {
           address: r.address || undefined,
           category: r.category,
           sourceUrl: r.link || r.share_link,
+          rating: r.rating,
+          reviews: r.review_count || r.reviews,
           keyword: input.keyword,
           location: input.location,
           source: "yelp_serpapi",
@@ -397,12 +406,6 @@ function mapLocalServicesResults(
       yearsInBusiness: r.years_in_business,
       googleGuaranteed: r.google_guaranteed || r.google_screened,
       licenseNumber: r.license_number,
-    } as SerpLead & {
-      rating?: number;
-      reviews?: number;
-      yearsInBusiness?: number;
-      googleGuaranteed?: boolean;
-      licenseNumber?: string;
     };
   });
 }
