@@ -12,6 +12,7 @@ import {
 } from "@/lib/scrapers/serpapi";
 import { getServiceRoleClient } from "@/lib/supabase";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { getStaleThresholdIso } from "@/lib/task-utils";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -99,6 +100,8 @@ export async function GET(request: Request) {
     }
   }
 
+  const MAX_TASK_RUNTIME_MINUTES = 30;
+
   // Otherwise, return the list of existing tasks from Supabase
   if (!supabase) {
     return NextResponse.json(
@@ -106,6 +109,18 @@ export async function GET(request: Request) {
       { status: 500 },
     );
   }
+
+  const staleThreshold = getStaleThresholdIso(new Date(), MAX_TASK_RUNTIME_MINUTES);
+  await supabase
+    .from("scrape_tasks")
+    .update({
+      status: "failed",
+      review_reason: `Timeout: más de ${MAX_TASK_RUNTIME_MINUTES} minutos sin finalizar`,
+      finished_at: new Date().toISOString(),
+    })
+    .eq("status", "running")
+    .lt("created_at", staleThreshold)
+    .is("finished_at", null);
 
   const { data: tasks, error } = await supabase
     .from("scrape_tasks")

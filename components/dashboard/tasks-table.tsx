@@ -22,6 +22,7 @@ import {
 import { ArrowUpRight, Trash2, Download, FileSpreadsheet, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useRouter } from "next/navigation";
+import { formatTaskDate } from "@/lib/task-utils";
 
 type TaskStatus = "pending" | "running" | "completed" | "failed" | "warning" | "ignored";
 
@@ -181,7 +182,7 @@ export function TasksTable() {
         reviewReason: t.review_reason,
         sources: t.sources || [],
         leads: t.leads_count || 0,
-        createdAt: new Date(t.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        createdAt: formatTaskDate(t.created_at),
       }));
 
       setTasks(mappedTasks);
