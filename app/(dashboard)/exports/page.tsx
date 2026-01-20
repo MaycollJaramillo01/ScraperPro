@@ -73,7 +73,7 @@ export default function ExportsPage() {
       const blob = await response.blob();
       const contentDisposition = response.headers.get("Content-Disposition");
       const filenameMatch = contentDisposition?.match(/filename="(.+)"/);
-      const filename = filenameMatch ? filenameMatch[1] : `leads-reexport-${Date.now()}.csv`;
+      const filename = filenameMatch ? filenameMatch[1] : `leads-reexport-${Date.now()}.xlsx`;
 
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");

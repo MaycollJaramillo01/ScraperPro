@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
+import ExcelJS from "exceljs";
 import { getServiceRoleClient } from "@/lib/supabase";
 import { hasPhone } from "@/lib/lead-utils";
+
+export const runtime = "nodejs";
 
 export async function POST(request: Request) {
   try {
@@ -26,9 +29,6 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    // Create Excel-compatible CSV with BOM for proper UTF-8 encoding
-    const BOM = "\uFEFF";
-    const delimiter = ";";
     const headers = [
       "Nombre",
       "Teléfono",
@@ -48,48 +48,53 @@ export async function POST(request: Request) {
     const rows = (leads || [])
       .filter((lead: any) => hasPhone(lead.phone || null))
       .map((lead: any) => [
-      lead.name || "",
-      lead.phone || "",
-      lead.email || "",
-      lead.website || "",
-      lead.address || lead.street || "",
-      lead.city || "",
-      lead.region || "",
-      lead.postal_code || "",
-      lead.country || "",
-      lead.category || "",
-      lead.source || "",
-      lead.source_url || "",
-      lead.created_at ? new Date(lead.created_at).toLocaleString() : "",
-    ]);
+        lead.name || "",
+        lead.phone || "",
+        lead.email || "",
+        lead.website || "",
+        lead.address || lead.street || "",
+        lead.city || "",
+        lead.region || "",
+        lead.postal_code || "",
+        lead.country || "",
+        lead.category || "",
+        lead.source || "",
+        lead.source_url || "",
+        lead.created_at ? new Date(lead.created_at).toLocaleString() : "",
+      ]);
 
-    // Escape CSV values
-    const escapeCSV = (value: string) => {
-      if (
-        value.includes(delimiter) ||
-        value.includes('"') ||
-        value.includes("\n")
-      ) {
-        return `"${value.replace(/"/g, '""')}"`;
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = "ScraperPro";
+    workbook.created = new Date();
+
+    const chunkSize = 500;
+    const totalChunks = Math.max(1, Math.ceil(rows.length / chunkSize));
+
+    for (let i = 0; i < totalChunks; i += 1) {
+      const start = i * chunkSize;
+      const chunk = rows.slice(start, start + chunkSize);
+      const sheet = workbook.addWorksheet(`Leads ${i + 1}`);
+
+      sheet.addRow(headers);
+      if (chunk.length > 0) {
+        sheet.addRows(chunk);
       }
-      return value;
-    };
 
-    const csvContent =
-      BOM +
-      headers.map(escapeCSV).join(delimiter) +
-      "\n" +
-      rows.map((row: string[]) => row.map(escapeCSV).join(delimiter)).join("\n");
+      sheet.getRow(1).font = { bold: true };
+      sheet.columns = headers.map(() => ({ width: 22 }));
+    }
+
+    const workbookBuffer = await workbook.xlsx.writeBuffer();
 
     // Generate filename with timestamp
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-    const filename = `leads-bulk-${taskIds.length}tasks-${timestamp}.csv`;
+    const filename = `leads-bulk-${taskIds.length}tasks-${timestamp}.xlsx`;
 
-    return new NextResponse(csvContent, {
+    return new NextResponse(Buffer.from(workbookBuffer), {
       status: 200,
       headers: {
-        "Content-Type": "text/csv; charset=utf-8",
-        "Content-Disposition": `attachment; filename="${filename}"`,
+        "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "Content-Disposition": `attachment; filename=\"${filename}\"`,
       },
     });
   } catch (error) {
