@@ -2,6 +2,42 @@ import { NextResponse } from "next/server";
 import { getServiceRoleClient } from "@/lib/supabase";
 import { hasPhone } from "@/lib/lead-utils";
 
+const LATINO_MARKERS = [
+    "espanol",
+    "se habla espanol",
+    "hablamos espanol",
+    "bilingue",
+    "latino",
+    "latina",
+    "hispano",
+    "hispana",
+];
+
+function isLatinoProbable(fields: Array<string | null | undefined>): boolean {
+    const haystack = fields
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+    return LATINO_MARKERS.some((marker) => haystack.includes(marker));
+}
+
+async function tagTaskAsExported(taskId: string) {
+    const supabase = getServiceRoleClient();
+    const { data: task } = await supabase
+        .from("scrape_tasks")
+        .select("id,notes")
+        .eq("id", taskId)
+        .maybeSingle();
+
+    if (!task) return;
+
+    const notes = typeof task.notes === "string" ? task.notes : "";
+    if (notes.toLowerCase().includes("exportada")) return;
+
+    const nextNotes = notes ? `${notes} | exportada` : "exportada";
+    await supabase.from("scrape_tasks").update({ notes: nextNotes }).eq("id", taskId);
+}
+
 export async function GET(
     request: Request,
     { params }: { params: Promise<{ id: string }> }
@@ -26,18 +62,19 @@ export async function GET(
         const delimiter = ";";
         const headers = [
             "Nombre",
-            "Teléfono",
+            "Telefono",
             "Email",
             "Sitio Web",
-            "Dirección",
+            "Direccion",
             "Ciudad",
-            "Región",
-            "Código Postal",
-            "País",
-            "Categoría",
+            "Region",
+            "Codigo Postal",
+            "Pais",
+            "Categoria",
             "Fuente",
             "URL Fuente",
-            "Fecha Creación",
+            "Fecha Creacion",
+            "Latino probable",
         ];
 
         interface Lead {
@@ -73,6 +110,14 @@ export async function GET(
             lead.source || "",
             lead.source_url || "",
             lead.created_at ? new Date(lead.created_at).toLocaleString() : "",
+            isLatinoProbable([
+                lead.name,
+                lead.category,
+                lead.website,
+                lead.source_url,
+            ])
+                ? "Si"
+                : "No",
         ]);
 
         const escapeCSV = (value: string) => {
@@ -91,6 +136,10 @@ export async function GET(
             headers.map(escapeCSV).join(delimiter) +
             "\n" +
             rows.map((row) => row.map(escapeCSV).join(delimiter)).join("\n");
+
+        void tagTaskAsExported(taskId).catch((err) => {
+            console.error("Failed to tag exported task", err);
+        });
 
         // Return as downloadable file
         return new Response(csvContent, {

@@ -5,6 +5,51 @@ import { hasPhone } from "@/lib/lead-utils";
 
 export const runtime = "nodejs";
 
+const LATINO_MARKERS = [
+  "espanol",
+  "español",
+  "se habla espanol",
+  "se habla español",
+  "hablamos espanol",
+  "hablamos español",
+  "bilingue",
+  "bilingüe",
+  "latino",
+  "latina",
+  "hispano",
+  "hispana",
+];
+
+function isLatinoProbable(fields: Array<string | null | undefined>): boolean {
+  const haystack = fields
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  return LATINO_MARKERS.some((marker) => haystack.includes(marker));
+}
+
+async function tagTasksAsExported(taskIds: string[]) {
+  if (!taskIds.length) return;
+  const supabase = getServiceRoleClient();
+  const { data: tasks } = await supabase
+    .from("scrape_tasks")
+    .select("id,notes")
+    .in("id", taskIds);
+
+  if (!tasks || tasks.length === 0) return;
+
+  await Promise.all(
+    tasks.map((task) => {
+      const notes = typeof task.notes === "string" ? task.notes : "";
+      if (notes.toLowerCase().includes("exportada")) {
+        return Promise.resolve();
+      }
+      const nextNotes = notes ? `${notes} | exportada` : "exportada";
+      return supabase.from("scrape_tasks").update({ notes: nextNotes }).eq("id", task.id);
+    }),
+  );
+}
+
 export async function POST(request: Request) {
   try {
     const { taskIds } = await request.json();
@@ -61,6 +106,7 @@ export async function POST(request: Request) {
       "Fuente",
       "URL Fuente",
       "Fecha Creación",
+      "Latino probable",
     ];
 
     const rows = (leads || [])
@@ -75,11 +121,19 @@ export async function POST(request: Request) {
         lead.region || "",
         lead.postal_code || "",
         lead.country || "",
-        lead.category || "",
-        lead.source || "",
-        lead.source_url || "",
-        lead.created_at ? new Date(lead.created_at).toLocaleString() : "",
-      ]);
+      lead.category || "",
+      lead.source || "",
+      lead.source_url || "",
+      lead.created_at ? new Date(lead.created_at).toLocaleString() : "",
+      isLatinoProbable([
+        lead.name,
+        lead.category,
+        lead.website,
+        lead.source_url,
+      ])
+        ? "Si"
+        : "No",
+    ]);
 
     const workbook = new ExcelJS.Workbook();
     workbook.creator = "ScraperPro";
@@ -107,6 +161,10 @@ export async function POST(request: Request) {
     // Generate filename with timestamp
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
     const filename = `leads-bulk-${taskIds.length}tasks-${timestamp}.xlsx`;
+
+    void tagTasksAsExported(taskIds).catch((err) => {
+      console.error("Failed to tag exported tasks", err);
+    });
 
     return new NextResponse(Buffer.from(workbookBuffer), {
       status: 200,

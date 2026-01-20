@@ -59,6 +59,45 @@ type TaskRequestBody = {
 type LeadsWithPhone = { phone?: string | null; rating?: number };
 type LeadsResult = { leads: LeadsWithPhone[] };
 
+function getYellowPagesKeywordVariants(keyword: string): string[] {
+  const normalized = keyword.toLowerCase();
+  const variants = new Set<string>();
+  const addVariant = (value: string) => {
+    if (!value) return;
+    variants.add(value);
+  };
+
+  addVariant(keyword);
+
+  const isConstruction =
+    normalized.includes("construction") ||
+    normalized.includes("construccion") ||
+    normalized.includes("contratista") ||
+    normalized.includes("general contractor");
+  const isRoofing =
+    normalized.includes("roof") ||
+    normalized.includes("roofing") ||
+    normalized.includes("techo");
+
+  if (isConstruction) {
+    addVariant("construction contractor");
+    addVariant("construction company");
+    addVariant("general contractor");
+    addVariant("contratista general");
+    addVariant("contratista de construccion");
+  }
+
+  if (isRoofing) {
+    addVariant("roofing contractor");
+    addVariant("roofing company");
+    addVariant("roof repair");
+    addVariant("contratista de techos");
+    addVariant("reparacion de techos");
+  }
+
+  return Array.from(variants);
+}
+
 function hasMinStars(lead: LeadsWithPhone, minStars?: number | null): boolean {
   if (!minStars) return true;
   if (typeof lead.rating !== "number") return false;
@@ -278,12 +317,16 @@ export async function POST(request: Request) {
     // Execute scraping cycles until we reach 300 leads or max cycles
     let currentCycle = 0;
     let totalLeadsCount = 0;
+    const yellowPagesKeywords = sources.includes("yellow_pages")
+      ? getYellowPagesKeywordVariants(keyword)
+      : [keyword];
+    const maxCycles = Math.max(MAX_CYCLES, yellowPagesKeywords.length);
 
     // Scraping loop: execute cycles until we reach 300 leads or max cycles
-    while (currentCycle < MAX_CYCLES && totalLeadsCount < MIN_LEADS_PER_SOURCE) {
+    while (currentCycle < maxCycles && totalLeadsCount < MIN_LEADS_PER_SOURCE) {
       currentCycle++;
       console.log(
-        `[Task ${taskId}] Cycle ${currentCycle}/${MAX_CYCLES} - Current leads: ${totalLeadsCount}`,
+        `[Task ${taskId}] Cycle ${currentCycle}/${maxCycles} - Current leads: ${totalLeadsCount}`,
       );
 
       const cycleLeads: typeof accumulatedLeads = [];
@@ -293,8 +336,13 @@ export async function POST(request: Request) {
       if (sources.includes("yellow_pages")) {
         try {
           const targetLimit = MAX_LEADS_PER_SOURCE;
+          const ypKeywordIndex = Math.min(
+            currentCycle - 1,
+            yellowPagesKeywords.length - 1,
+          );
+          const yellowPagesKeyword = yellowPagesKeywords[ypKeywordIndex] || keyword;
           yellowPagesResult = await scrapeYellowPages({
-            keyword,
+            keyword: yellowPagesKeyword,
             location,
             limit: targetLimit,
           });
@@ -640,7 +688,7 @@ export async function POST(request: Request) {
             leads_count: totalLeadsCount,
             review_reason:
               totalLeadsCount < MIN_LEADS_PER_SOURCE
-                ? `Cycle ${currentCycle}/${MAX_CYCLES}: ${totalLeadsCount} leads (Target: ${MIN_LEADS_PER_SOURCE}+)`
+                ? `Cycle ${currentCycle}/${maxCycles}: ${totalLeadsCount} leads (Target: ${MIN_LEADS_PER_SOURCE}+)`
                 : null,
           })
           .eq("id", taskId);
@@ -655,7 +703,7 @@ export async function POST(request: Request) {
       }
 
       // If we haven't reached the minimum and there are more cycles, wait before next cycle
-      if (currentCycle < MAX_CYCLES && totalLeadsCount < MIN_LEADS_PER_SOURCE) {
+      if (currentCycle < maxCycles && totalLeadsCount < MIN_LEADS_PER_SOURCE) {
         console.log(
           `[Task ${taskId}] Only ${totalLeadsCount} leads after cycle ${currentCycle}, waiting ${CYCLE_DELAY_MS}ms before next cycle...`,
         );
