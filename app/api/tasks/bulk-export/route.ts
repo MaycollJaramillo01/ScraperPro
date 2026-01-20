@@ -18,15 +18,33 @@ export async function POST(request: Request) {
 
     const supabase = getServiceRoleClient();
 
-    // Fetch all leads for the selected tasks
-    const { data: leads, error } = await supabase
-      .from("leads")
-      .select("*")
-      .in("task_id", taskIds)
-      .order("created_at", { ascending: false });
+    const batchSize = 1000;
+    let offset = 0;
+    let leads: any[] = [];
 
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
+    while (true) {
+      const { data, error } = await supabase
+        .from("leads")
+        .select("*")
+        .in("task_id", taskIds)
+        .order("created_at", { ascending: false })
+        .range(offset, offset + batchSize - 1);
+
+      if (error) {
+        return NextResponse.json({ error: error.message }, { status: 500 });
+      }
+
+      if (!data || data.length === 0) {
+        break;
+      }
+
+      leads = leads.concat(data);
+
+      if (data.length < batchSize) {
+        break;
+      }
+
+      offset += batchSize;
     }
 
     const headers = [
