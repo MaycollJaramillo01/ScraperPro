@@ -5,6 +5,17 @@ import { hasPhone } from "@/lib/lead-utils";
 
 export const runtime = "nodejs";
 
+const SHEET_NAMES = [
+  "Alicia",
+  "Roberto",
+  "Hellen",
+  "Sarai",
+  "Alejandra",
+  "Camilo",
+  "Gerson",
+  "Faviola",
+];
+
 const LATINO_MARKERS = [
   "espanol",
   "español",
@@ -142,10 +153,17 @@ export async function POST(request: Request) {
     const chunkSize = 500;
     const totalChunks = Math.max(1, Math.ceil(rows.length / chunkSize));
 
+    const sheetCounts: Record<string, number> = {};
+
     for (let i = 0; i < totalChunks; i += 1) {
       const start = i * chunkSize;
       const chunk = rows.slice(start, start + chunkSize);
-      const sheet = workbook.addWorksheet(`Leads ${i + 1}`);
+      const baseName = SHEET_NAMES[i % SHEET_NAMES.length];
+      sheetCounts[baseName] = (sheetCounts[baseName] || 0) + 1;
+      const sheetName = sheetCounts[baseName] > 1
+        ? `${baseName} ${sheetCounts[baseName]}`
+        : baseName;
+      const sheet = workbook.addWorksheet(sheetName);
 
       sheet.addRow(headers);
       if (chunk.length > 0) {

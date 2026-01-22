@@ -158,7 +158,7 @@ export async function GET(request: Request) {
     }
   }
 
-  const MAX_TASK_RUNTIME_MINUTES = 30;
+  const MAX_TASK_RUNTIME_MINUTES = 720;
 
   // Otherwise, return the list of existing tasks from Supabase
   if (!supabase) {
@@ -272,9 +272,11 @@ export async function POST(request: Request) {
       }
     }
 
-    const MIN_LEADS_PER_SOURCE = 300;
+    const MIN_LEADS_PER_SOURCE = 1000;
     const MAX_LEADS_PER_SOURCE = 1000;
-    const MAX_CYCLES = 5; // Maximum number of retry cycles
+    const MAX_CYCLES_BASE = 15;
+    const MAX_CYCLES_CAP = 100;
+    const NO_PROGRESS_LIMIT = 3;
     const CYCLE_DELAY_MS = 2000; // 2 seconds delay between cycles
     
     const processedSources: string[] = [];
@@ -317,13 +319,16 @@ export async function POST(request: Request) {
     // Execute scraping cycles until we reach 300 leads or max cycles
     let currentCycle = 0;
     let totalLeadsCount = 0;
+    let lastLeadsCount = 0;
+    let noProgressStreak = 0;
+    let maxCyclesDynamic = MAX_CYCLES_BASE;
     const yellowPagesKeywords = sources.includes("yellow_pages")
       ? getYellowPagesKeywordVariants(keyword)
       : [keyword];
     const maxCycles = Math.max(MAX_CYCLES, yellowPagesKeywords.length);
 
-    // Scraping loop: execute cycles until we reach 300 leads or max cycles
-    while (currentCycle < maxCycles && totalLeadsCount < MIN_LEADS_PER_SOURCE) {
+    // Scraping loop: execute cycles until we reach target or dynamic max cycles
+    while (currentCycle < maxCyclesDynamic && totalLeadsCount < MIN_LEADS_PER_SOURCE) {
       currentCycle++;
       console.log(
         `[Task ${taskId}] Cycle ${currentCycle}/${maxCycles} - Current leads: ${totalLeadsCount}`,
@@ -679,6 +684,24 @@ export async function POST(request: Request) {
         accumulatedLeads.map((l) => `${l.name}|${l.phone || ""}`),
       );
       totalLeadsCount = uniqueLeads.size;
+      if (totalLeadsCount <= lastLeadsCount) {
+        noProgressStreak += 1;
+      } else {
+        noProgressStreak = 0;
+      }
+
+      const avgLeadsPerCycle = totalLeadsCount / currentCycle;
+      if (avgLeadsPerCycle > 0) {
+        const remaining = Math.max(0, MIN_LEADS_PER_SOURCE - totalLeadsCount);
+        const estimatedCycles = Math.ceil(remaining / avgLeadsPerCycle);
+        maxCyclesDynamic = Math.min(
+          MAX_CYCLES_CAP,
+          Math.max(MAX_CYCLES_BASE, currentCycle + estimatedCycles + 2),
+        );
+      } else {
+        maxCyclesDynamic = MAX_CYCLES_BASE;
+      }
+      lastLeadsCount = totalLeadsCount;
 
       // Update task in database with current progress
       if (supabase) {
@@ -688,7 +711,7 @@ export async function POST(request: Request) {
             leads_count: totalLeadsCount,
             review_reason:
               totalLeadsCount < MIN_LEADS_PER_SOURCE
-                ? `Cycle ${currentCycle}/${maxCycles}: ${totalLeadsCount} leads (Target: ${MIN_LEADS_PER_SOURCE}+)`
+                ? `Cycle ${currentCycle}/${maxCyclesDynamic}: ${totalLeadsCount} leads (Target: ${MIN_LEADS_PER_SOURCE}+)`
                 : null,
           })
           .eq("id", taskId);
@@ -703,7 +726,14 @@ export async function POST(request: Request) {
       }
 
       // If we haven't reached the minimum and there are more cycles, wait before next cycle
-      if (currentCycle < maxCycles && totalLeadsCount < MIN_LEADS_PER_SOURCE) {
+      if (noProgressStreak >= NO_PROGRESS_LIMIT) {
+        console.log(
+          `[Task ${taskId}] No progress in ${NO_PROGRESS_LIMIT} cycles. Stopping.`,
+        );
+        break;
+      }
+
+      if (currentCycle < maxCyclesDynamic && totalLeadsCount < MIN_LEADS_PER_SOURCE) {
         console.log(
           `[Task ${taskId}] Only ${totalLeadsCount} leads after cycle ${currentCycle}, waiting ${CYCLE_DELAY_MS}ms before next cycle...`,
         );
@@ -724,7 +754,9 @@ export async function POST(request: Request) {
       const reviewReason = hasMinimum
         ? null
         : hasSomeLeads
-        ? `Rendimiento bajo: ${totalLeadsCount} leads tras ${currentCycle} ciclo(s) (meta: ${MIN_LEADS_PER_SOURCE}+)`
+        ? noProgressStreak >= NO_PROGRESS_LIMIT
+          ? `Sin progreso en ${NO_PROGRESS_LIMIT} ciclos: ${totalLeadsCount} leads (meta: ${MIN_LEADS_PER_SOURCE}+)`
+          : `Ciclo máximo (${maxCyclesDynamic}) alcanzado: ${totalLeadsCount} leads (meta: ${MIN_LEADS_PER_SOURCE}+)`
         : `Sin leads tras ${currentCycle} ciclo(s) (meta: ${MIN_LEADS_PER_SOURCE}+)`;
 
       const { error: finalizeError } = await supabase
