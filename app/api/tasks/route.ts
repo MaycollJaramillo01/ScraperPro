@@ -325,7 +325,7 @@ export async function POST(request: Request) {
     const yellowPagesKeywords = sources.includes("yellow_pages")
       ? getYellowPagesKeywordVariants(keyword)
       : [keyword];
-    const maxCycles = Math.max(MAX_CYCLES, yellowPagesKeywords.length);
+    const maxCycles = Math.max(MAX_CYCLES_BASE, yellowPagesKeywords.length);
 
     // Scraping loop: execute cycles until we reach target or dynamic max cycles
     while (currentCycle < maxCyclesDynamic && totalLeadsCount < MIN_LEADS_PER_SOURCE) {
