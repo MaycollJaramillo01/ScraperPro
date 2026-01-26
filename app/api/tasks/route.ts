@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { scrapeYellowPages } from "@/lib/scrapers/yellow-pages";
+import { scrapeAngi } from "@/lib/scrapers/angi";
 import { scrapeYelp } from "@/lib/scrapers/yelp";
 import {
   scrapeSerpGoogleMaps,
@@ -28,17 +29,17 @@ function getTaskLockKey(keyword: string, location: string): string {
 
 function acquireLock(key: string): boolean {
   const existing = taskLocks.get(key);
-  
+
   // Clean up stale locks (older than timeout)
   if (existing && Date.now() - existing.lockedAt > LOCK_TIMEOUT) {
     taskLocks.delete(key);
   }
-  
+
   // If lock exists and is still valid, deny access
   if (taskLocks.has(key)) {
     return false;
   }
-  
+
   // Acquire lock
   taskLocks.set(key, { locked: true, lockedAt: Date.now() });
   return true;
@@ -278,7 +279,7 @@ export async function POST(request: Request) {
     const MAX_CYCLES_CAP = 100;
     const NO_PROGRESS_LIMIT = 3;
     const CYCLE_DELAY_MS = 2000; // 2 seconds delay between cycles
-    
+
     const processedSources: string[] = [];
     const accumulatedLeads: {
       task_id: string;
@@ -299,7 +300,7 @@ export async function POST(request: Request) {
       country?: string | null;
       raw_location?: string | null;
     }[] = [];
-    
+
     // Track results across all cycles
     let yellowPagesResult:
       | Awaited<ReturnType<typeof scrapeYellowPages>>
@@ -315,7 +316,7 @@ export async function POST(request: Request) {
       null;
     let googleJobsResult: Awaited<ReturnType<typeof scrapeSerpGoogleJobs>> | null =
       null;
-    
+
     // Execute scraping cycles until we reach 300 leads or max cycles
     let currentCycle = 0;
     let totalLeadsCount = 0;
@@ -361,29 +362,73 @@ export async function POST(request: Request) {
               ...yellowPagesResult.leads
                 .filter((lead) => hasPhone(lead.phone))
                 .map((lead) => ({
-                task_id: taskId,
-                source: "yellow_pages",
-                keyword,
-                location,
-                name: lead.name,
-                phone: lead.phone || null,
-                website: lead.website || null,
-                business_profile: lead.sourceUrl || null,
-                street: lead.street || null,
-                city: lead.city || null,
-                region: lead.region || null,
-                postal_code: lead.postalCode || null,
-                address: lead.address || null,
-                category: lead.category || null,
-                source_url: lead.sourceUrl || null,
-                country: "US",
-                raw_location: location,
-              })),
+                  task_id: taskId,
+                  source: "yellow_pages",
+                  keyword,
+                  location,
+                  name: lead.name,
+                  phone: lead.phone || null,
+                  website: lead.website || null,
+                  business_profile: lead.sourceUrl || null,
+                  street: lead.street || null,
+                  city: lead.city || null,
+                  region: lead.region || null,
+                  postal_code: lead.postalCode || null,
+                  address: lead.address || null,
+                  category: lead.category || null,
+                  source_url: lead.sourceUrl || null,
+                  country: "US",
+                  raw_location: location,
+                })),
             );
           }
         } catch (scrapeError) {
           console.error(`[Task ${taskId}] Yellow Pages error in cycle ${currentCycle}:`, scrapeError);
           // Continue with other sources instead of failing
+        }
+      }
+
+      // Angi - Home Services Directory
+      if (sources.includes("angi")) {
+        try {
+          const angiResult = await scrapeAngi({
+            keyword,
+            location,
+            limit: MAX_LEADS_PER_SOURCE,
+          });
+
+          if (!processedSources.includes("angi")) {
+            processedSources.push("angi");
+          }
+
+          if (angiResult.leads.length > 0) {
+            cycleLeads.push(
+              ...angiResult.leads
+                .filter((lead) => hasMinStars(lead, minStars))
+                .map((lead) => ({
+                  task_id: taskId,
+                  source: "angi",
+                  keyword,
+                  location,
+                  name: lead.name,
+                  phone: lead.phone || null,
+                  website: lead.website || null,
+                  business_profile: lead.sourceUrl || null,
+                  street: null,
+                  city: lead.city || null,
+                  region: lead.region || null,
+                  postal_code: lead.postalCode || null,
+                  address: lead.address || null,
+                  category: lead.category || null,
+                  source_url: lead.sourceUrl || null,
+                  country: "US",
+                  raw_location: location,
+                })),
+            );
+          }
+        } catch (scrapeError) {
+          console.error(`[Task ${taskId}] Angi error in cycle ${currentCycle}:`, scrapeError);
+          // Continue with other sources
         }
       }
 
@@ -437,24 +482,24 @@ export async function POST(request: Request) {
             ...yelpLeadsResult.leads
               .filter((lead) => hasMinStars(lead, minStars) && hasPhone(lead.phone))
               .map((lead) => ({
-              task_id: taskId,
-              source: lead.source || "yelp",
-              keyword,
-              location,
-              name: lead.name,
-              phone: lead.phone || null,
-              website: lead.website || null,
-              business_profile: lead.sourceUrl || null,
-              street: lead.street || null,
-              city: lead.city || null,
-              region: lead.region || null,
-              postal_code: lead.postalCode || null,
-              address: lead.address || null,
-              category: lead.category || null,
-              source_url: lead.sourceUrl || null,
-              country: "US",
-              raw_location: location,
-            })),
+                task_id: taskId,
+                source: lead.source || "yelp",
+                keyword,
+                location,
+                name: lead.name,
+                phone: lead.phone || null,
+                website: lead.website || null,
+                business_profile: lead.sourceUrl || null,
+                street: lead.street || null,
+                city: lead.city || null,
+                region: lead.region || null,
+                postal_code: lead.postalCode || null,
+                address: lead.address || null,
+                category: lead.category || null,
+                source_url: lead.sourceUrl || null,
+                country: "US",
+                raw_location: location,
+              })),
           );
         }
       }
@@ -476,24 +521,24 @@ export async function POST(request: Request) {
               ...googleMapsResult.leads
                 .filter((lead) => hasMinStars(lead, minStars) && hasPhone(lead.phone))
                 .map((lead) => ({
-                task_id: taskId,
-                source: "google",
-                keyword,
-                location,
-                name: lead.name,
-                phone: lead.phone || null,
-                website: lead.website || null,
-                business_profile: lead.sourceUrl || null,
-                street: lead.street || null,
-                city: lead.city || null,
-                region: lead.region || null,
-                postal_code: lead.postalCode || null,
-                address: lead.address || null,
-                category: lead.category || null,
-                source_url: lead.sourceUrl || null,
-                country: "US",
-                raw_location: location,
-              })),
+                  task_id: taskId,
+                  source: "google",
+                  keyword,
+                  location,
+                  name: lead.name,
+                  phone: lead.phone || null,
+                  website: lead.website || null,
+                  business_profile: lead.sourceUrl || null,
+                  street: lead.street || null,
+                  city: lead.city || null,
+                  region: lead.region || null,
+                  postal_code: lead.postalCode || null,
+                  address: lead.address || null,
+                  category: lead.category || null,
+                  source_url: lead.sourceUrl || null,
+                  country: "US",
+                  raw_location: location,
+                })),
             );
           }
         } catch (scrapeError) {
@@ -519,24 +564,24 @@ export async function POST(request: Request) {
               ...bingPlacesResult.leads
                 .filter((lead) => hasMinStars(lead, minStars) && hasPhone(lead.phone))
                 .map((lead) => ({
-                task_id: taskId,
-                source: "bing_places",
-                keyword,
-                location,
-                name: lead.name,
-                phone: lead.phone || null,
-                website: lead.website || null,
-                business_profile: lead.sourceUrl || null,
-                street: lead.street || null,
-                city: lead.city || null,
-                region: lead.region || null,
-                postal_code: lead.postalCode || null,
-                address: lead.address || null,
-                category: lead.category || null,
-                source_url: lead.sourceUrl || null,
-                country: "US",
-                raw_location: location,
-              })),
+                  task_id: taskId,
+                  source: "bing_places",
+                  keyword,
+                  location,
+                  name: lead.name,
+                  phone: lead.phone || null,
+                  website: lead.website || null,
+                  business_profile: lead.sourceUrl || null,
+                  street: lead.street || null,
+                  city: lead.city || null,
+                  region: lead.region || null,
+                  postal_code: lead.postalCode || null,
+                  address: lead.address || null,
+                  category: lead.category || null,
+                  source_url: lead.sourceUrl || null,
+                  country: "US",
+                  raw_location: location,
+                })),
             );
           }
         } catch (scrapeError) {
@@ -563,24 +608,24 @@ export async function POST(request: Request) {
               ...googleLocalServicesResult.leads
                 .filter((lead) => hasMinStars(lead, minStars) && hasPhone(lead.phone))
                 .map((lead) => ({
-                task_id: taskId,
-                source: "google_local_services",
-                keyword,
-                location,
-                name: lead.name,
-                phone: lead.phone || null,
-                website: lead.website || null,
-                business_profile: lead.sourceUrl || null,
-                street: lead.street || null,
-                city: lead.city || null,
-                region: lead.region || null,
-                postal_code: lead.postalCode || null,
-                address: lead.address || null,
-                category: lead.category || null,
-                source_url: lead.sourceUrl || null,
-                country: "US",
-                raw_location: location,
-              })),
+                  task_id: taskId,
+                  source: "google_local_services",
+                  keyword,
+                  location,
+                  name: lead.name,
+                  phone: lead.phone || null,
+                  website: lead.website || null,
+                  business_profile: lead.sourceUrl || null,
+                  street: lead.street || null,
+                  city: lead.city || null,
+                  region: lead.region || null,
+                  postal_code: lead.postalCode || null,
+                  address: lead.address || null,
+                  category: lead.category || null,
+                  source_url: lead.sourceUrl || null,
+                  country: "US",
+                  raw_location: location,
+                })),
             );
           }
         } catch (scrapeError) {
@@ -607,24 +652,24 @@ export async function POST(request: Request) {
               ...googleJobsResult.leads
                 .filter((lead) => hasMinStars(lead, minStars) && hasPhone(lead.phone))
                 .map((lead) => ({
-                task_id: taskId,
-                source: "google_jobs",
-                keyword,
-                location,
-                name: lead.name,
-                phone: lead.phone || null,
-                website: lead.website || null,
-                business_profile: lead.sourceUrl || null,
-                street: lead.street || null,
-                city: lead.city || null,
-                region: lead.region || null,
-                postal_code: lead.postalCode || null,
-                address: lead.address || null,
-                category: lead.category || null,
-                source_url: lead.sourceUrl || null,
-                country: "US",
-                raw_location: location,
-              })),
+                  task_id: taskId,
+                  source: "google_jobs",
+                  keyword,
+                  location,
+                  name: lead.name,
+                  phone: lead.phone || null,
+                  website: lead.website || null,
+                  business_profile: lead.sourceUrl || null,
+                  street: lead.street || null,
+                  city: lead.city || null,
+                  region: lead.region || null,
+                  postal_code: lead.postalCode || null,
+                  address: lead.address || null,
+                  category: lead.category || null,
+                  source_url: lead.sourceUrl || null,
+                  country: "US",
+                  raw_location: location,
+                })),
             );
           }
         } catch (scrapeError) {
@@ -749,15 +794,15 @@ export async function POST(request: Request) {
       const finalStatus = hasMinimum
         ? "completed"
         : hasSomeLeads
-        ? "warning"
-        : "failed";
+          ? "warning"
+          : "failed";
       const reviewReason = hasMinimum
         ? null
         : hasSomeLeads
-        ? noProgressStreak >= NO_PROGRESS_LIMIT
-          ? `Sin progreso en ${NO_PROGRESS_LIMIT} ciclos: ${totalLeadsCount} leads (meta: ${MIN_LEADS_PER_SOURCE}+)`
-          : `Ciclo máximo (${maxCyclesDynamic}) alcanzado: ${totalLeadsCount} leads (meta: ${MIN_LEADS_PER_SOURCE}+)`
-        : `Sin leads tras ${currentCycle} ciclo(s) (meta: ${MIN_LEADS_PER_SOURCE}+)`;
+          ? noProgressStreak >= NO_PROGRESS_LIMIT
+            ? `Sin progreso en ${NO_PROGRESS_LIMIT} ciclos: ${totalLeadsCount} leads (meta: ${MIN_LEADS_PER_SOURCE}+)`
+            : `Ciclo máximo (${maxCyclesDynamic}) alcanzado: ${totalLeadsCount} leads (meta: ${MIN_LEADS_PER_SOURCE}+)`
+          : `Sin leads tras ${currentCycle} ciclo(s) (meta: ${MIN_LEADS_PER_SOURCE}+)`;
 
       const { error: finalizeError } = await supabase
         .from("scrape_tasks")
@@ -793,8 +838,8 @@ export async function POST(request: Request) {
         message: hasMinimum
           ? `Tarea completada exitosamente con ${totalLeadsCount} leads después de ${currentCycle} ciclo(s).`
           : hasSomeLeads
-          ? `Tarea finalizada con rendimiento bajo: ${totalLeadsCount} leads tras ${currentCycle} ciclo(s) (meta: ${MIN_LEADS_PER_SOURCE}+).`
-          : `Tarea finalizada sin leads tras ${currentCycle} ciclo(s) (meta: ${MIN_LEADS_PER_SOURCE}+).`,
+            ? `Tarea finalizada con rendimiento bajo: ${totalLeadsCount} leads tras ${currentCycle} ciclo(s) (meta: ${MIN_LEADS_PER_SOURCE}+).`
+            : `Tarea finalizada sin leads tras ${currentCycle} ciclo(s) (meta: ${MIN_LEADS_PER_SOURCE}+).`,
       },
       { status: hasMinimum ? 201 : 200 },
     );

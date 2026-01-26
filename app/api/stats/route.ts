@@ -53,7 +53,9 @@ export async function GET() {
         // Group by day and source
         const historyMap = (historyData || [] as any[]).reduce((acc: any, curr: any) => {
             const date = new Date(curr.created_at).toISOString().split("T")[0];
-            const source = curr.source === "yellow_pages" ? "Yellow Pages" : curr.source || "Yellow Pages";
+            let source = curr.source || "Yellow Pages";
+            if (source === "yellow_pages") source = "Yellow Pages";
+            else if (source === "angi") source = "Angi";
 
             if (!acc[date]) acc[date] = {};
             acc[date][source] = (acc[date][source] || 0) + 1;

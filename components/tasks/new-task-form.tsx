@@ -68,6 +68,11 @@ const sourceOptions: SourceOption[] = [
     helper: "Directorio comercial en EEUU con telefonos y direcciones.",
   },
   {
+    id: "angi",
+    label: "Angi (Home Services)",
+    helper: "Directorio de servicios para el hogar con ratings y reviews verificados.",
+  },
+  {
     id: "google",
     label: "Google Maps",
     helper: "Incluye telefonos y websites de Maps",
@@ -291,7 +296,7 @@ export function NewTaskForm() {
       const leadsCount = result?.yellowPages?.leads?.length ?? 0;
       setMessage(
         result?.message ??
-          `Tarea lista. Yellow Pages devolvio ${leadsCount} leads y se guardo en Supabase.`,
+        `Tarea lista. Yellow Pages devolvio ${leadsCount} leads y se guardo en Supabase.`,
       );
 
       if (result?.supabase) {
@@ -463,7 +468,7 @@ export function NewTaskForm() {
                     ? "cursor-not-allowed opacity-50"
                     : "cursor-pointer hover:border-border hover:bg-white/[0.03]",
                   sources.includes(option.id) &&
-                    "border-emerald-500/60 bg-emerald-500/5",
+                  "border-emerald-500/60 bg-emerald-500/5",
                 )}
               >
                 <Checkbox
