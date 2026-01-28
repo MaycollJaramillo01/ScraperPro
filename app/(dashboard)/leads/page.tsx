@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Loader2 } from "lucide-react";
 import { formatTaskDate } from "@/lib/task-utils";
+import { getSupabaseClient } from "@/lib/supabase-client";
 
 function LeadsContent() {
   const searchParams = useSearchParams();
@@ -16,6 +17,8 @@ function LeadsContent() {
   const [taskLoading, setTaskLoading] = React.useState(false);
   const [taskError, setTaskError] = React.useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = React.useState<string | null>(null);
+  const [logs, setLogs] = React.useState<{ ts: string; msg: string }[]>([]);
+  const [logConnected, setLogConnected] = React.useState(false);
 
   React.useEffect(() => {
     if (!taskId) {
@@ -52,6 +55,64 @@ function LeadsContent() {
       clearInterval(interval);
     };
   }, [taskId]);
+
+  // Real-time log listener (Supabase Realtime on scrape_tasks row)
+  React.useEffect(() => {
+    if (!taskId) {
+      setLogs([]);
+      setLogConnected(false);
+      return;
+    }
+
+    const supabase = getSupabaseClient();
+    const channel = supabase
+      .channel(`task-log-${taskId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "scrape_tasks",
+          filter: `id=eq.${taskId}`,
+        },
+        (payload) => {
+          const row: any = payload.new;
+          if (!row) return;
+          const messages: string[] = [];
+          if (row.status) messages.push(`Estado: ${row.status}`);
+          if (typeof row.leads_count === "number") messages.push(`Leads: ${row.leads_count}`);
+          if (row.review_reason) messages.push(row.review_reason);
+          if (messages.length === 0) return;
+          setLogs((prev) => {
+            const next = [
+              { ts: new Date().toISOString(), msg: messages.join(" • ") },
+              ...prev,
+            ].slice(0, 120);
+            return next;
+          });
+        },
+      )
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED") setLogConnected(true);
+      });
+
+    return () => {
+      supabase.removeChannel(channel);
+      setLogConnected(false);
+    };
+  }, [taskId]);
+
+  // Seed initial log when we fetch taskInfo the first time.
+  React.useEffect(() => {
+    if (!taskInfo || !taskId) return;
+    const parts: string[] = [];
+    if (taskInfo.status) parts.push(`Estado: ${taskInfo.status}`);
+    if (typeof taskInfo.leads_count === "number") parts.push(`Leads: ${taskInfo.leads_count}`);
+    if (taskInfo.review_reason) parts.push(taskInfo.review_reason as string);
+    if (parts.length) {
+      setLogs((prev) => (prev.length ? prev : [{ ts: new Date().toISOString(), msg: parts.join(" • ") }]));
+    }
+  }, [taskInfo, taskId]);
 
   return (
     <div className="space-y-5" suppressHydrationWarning>
@@ -137,6 +198,45 @@ function LeadsContent() {
               Error cargando tarea: {taskError}
             </p>
           )}
+
+          {/* Log en vivo */}
+          <div className="mt-4 rounded-lg border border-border/70 bg-black/30 p-3">
+            <div className="flex items-center justify-between gap-2 text-xs">
+              <span className="uppercase tracking-[0.12em] text-muted-foreground">Log en vivo</span>
+              <span
+                className={
+                  "flex items-center gap-2 " +
+                  (logConnected ? "text-emerald-300" : "text-muted-foreground")
+                }
+              >
+                <span
+                  className={
+                    "h-2 w-2 rounded-full " +
+                    (logConnected ? "bg-emerald-400" : "bg-slate-500")
+                  }
+                />
+                {logConnected ? "Tiempo real" : "Conectando..."}
+              </span>
+            </div>
+            <div className="mt-2 max-h-64 space-y-1 overflow-auto pr-1 text-xs leading-relaxed text-slate-200/90">
+              {logs.length === 0 ? (
+                <p className="text-muted-foreground">Sin eventos aún.</p>
+              ) : (
+                logs.map((log, idx) => (
+                  <div key={`${log.ts}-${idx}`} className="flex gap-2">
+                    <span className="min-w-[72px] text-[11px] text-muted-foreground">
+                      {new Date(log.ts).toLocaleTimeString("es-ES", {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                        second: "2-digit",
+                      })}
+                    </span>
+                    <span>{log.msg}</span>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
         </div>
       )}
 
