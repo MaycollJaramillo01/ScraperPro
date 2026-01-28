@@ -1,0 +1,5 @@
+# Add proxies here, one per line
+# Format: protocol://user:pass@host:port or protocol://host:port
+# Examples:
+# http://user:pass@1.2.3.4:8080
+# http://1.2.3.4:8080
